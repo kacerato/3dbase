@@ -109,6 +109,13 @@ bool EditorSession::recoverAutosave(std::string* error) {
     return true;
 }
 
+bool EditorSession::discardAutosave(std::string* error) {
+    if (!requireProject(error)) {
+        return false;
+    }
+    return ProjectRepository::clearAutosave(document_->root, error);
+}
+
 const ProjectDocument* EditorSession::document() const noexcept {
     return document_ ? &*document_ : nullptr;
 }

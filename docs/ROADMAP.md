@@ -38,16 +38,21 @@ Exit criterion: all basic scene edits can be represented as deterministic comman
 
 ## Stage 2 — Native mobile editor shell (Qt Quick/QML)
 
-- [ ] Qt 6 application target built from C++/QML.
-- [ ] Android NDK toolchain configuration without Kotlin application code.
-- [ ] Landscape/portrait responsive editor frame.
-- [ ] Workspace manager.
-- [ ] Outliner backed by the real Scene document.
-- [ ] Inspector backed by selection.
-- [ ] Command toolbar wired to Undo/Redo.
-- [ ] Project create/open/recent flows.
-- [ ] Autosave scheduler and crash-recovery prompt.
-- [ ] Touch-safe panel resizing/collapsing.
+**Status: implementation in progress. Core/editor integration is host-tested; Qt/Android build validation is still pending.**
+
+- [ ] Qt 6 application target compiled and runtime-validated from C++/QML. The target/source now exists but has not yet been compiled in an environment with Qt 6.8+.
+- [ ] Android Qt/NDK configuration compiled for arm64-v8a without project-owned Kotlin application code.
+- [x] Landscape/portrait responsive editor frame source.
+- [x] Workspace manager backed by editor state.
+- [x] Outliner backed by the real Scene document.
+- [x] Inspector backed by active selection and command-based property edits.
+- [x] Command toolbar wired to Undo/Redo.
+- [x] Project create/open/recent flows.
+- [x] Autosave scheduler, lifecycle autosave and crash-recovery prompt.
+- [x] Touch-safe panel resizing/collapsing and compact drawers.
+- [x] `EditorSession` boundary prevents QML from mutating Scene directly.
+- [ ] QML load/runtime validation with a real Qt host SDK.
+- [ ] Android lifecycle/on-device validation.
 
 Exit criterion: a user can create a project and manipulate scene hierarchy/properties on-device even before 3D rendering is connected.
 

@@ -77,6 +77,21 @@ TEST_CASE("editor session autosave recovery stays dirty until primary save") {
     REQUIRE(!reopened.hasAutosave());
 }
 
+TEST_CASE("editor session can discard recovery without touching primary scene") {
+    const auto path = uniqueProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+
+    REQUIRE(session.createProject(path, "Discard Test", &error));
+    REQUIRE(session.createObject(m3d::ObjectType::Mesh, "Unsaved Mesh").has_value());
+    REQUIRE(session.writeAutosave(&error));
+    REQUIRE(session.hasAutosave());
+    REQUIRE(session.discardAutosave(&error));
+    REQUIRE(!session.hasAutosave());
+    REQUIRE(session.isDirty());
+}
+
 TEST_CASE("delete selection handles selected parent and child as one valid transaction") {
     const auto path = uniqueProjectPath();
     ProjectCleanup cleanup(path);

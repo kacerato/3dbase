@@ -39,6 +39,7 @@ public:
     [[nodiscard]] bool writeAutosave(std::string* error = nullptr) const;
     [[nodiscard]] bool hasAutosave() const;
     [[nodiscard]] bool recoverAutosave(std::string* error = nullptr);
+    [[nodiscard]] bool discardAutosave(std::string* error = nullptr);
 
     [[nodiscard]] bool hasProject() const noexcept { return document_.has_value(); }
     [[nodiscard]] bool isDirty() const noexcept { return recoveredDirty_ || commands_.isDirty(); }
