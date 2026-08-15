@@ -60,15 +60,21 @@ The editor shell is no longer considered source-only: CI compiles it, loads QML 
 
 ## Stage 3 — Vulkan viewport foundation
 
-**Status: in progress. The native Vulkan path, render-data boundary and camera/navigation foundation are implemented and CI-validated; actual scene geometry rendering is next.**
+**Status: in progress. The viewport now renders persistent authored mesh resources through a native Vulkan GPU cache with depth-correct drawing; MSAA, picking and selection visualization remain next.**
 
 - [x] Immutable `RenderSceneSnapshot` boundary; renderer never receives live `Scene`/selection pointers.
+- [x] Persistent/shareable `MeshResource` identity separated from `SceneObject` identity.
+- [x] Scene format v2 persists mesh vertices, normals, indices and object resource references while retaining v1 read compatibility.
+- [x] Mesh primitive creation is one atomic Undo/Redo operation covering object + geometry.
+- [x] Delete/Undo removes and restores orphan mesh resources without deleting resources still shared by other objects.
+- [x] Render snapshot resolves hierarchy to world matrices before the backend.
+- [x] Mesh content hashes let the GPU cache distinguish geometry changes from transform/selection changes.
 - [x] Android requests Vulkan before the first `QQuickWindow` is created.
 - [x] Reuse of Qt Quick's Vulkan instance/device/surface/render-pass lifecycle rather than creating a conflicting second surface.
 - [x] Native Vulkan commands recorded inside the Qt Quick render pass.
 - [x] Native command state isolated with `beginExternalCommands()` / `endExternalCommands()`.
 - [x] Viewport-native command recording clipped to the viewport rectangle.
-- [x] Real Vulkan runtime smoke test using software Vulkan/Lavapipe; success requires at least one native Vulkan command-recorded frame.
+- [x] Real Vulkan runtime smoke test using software Vulkan/Lavapipe; success requires a native frame and indexed authored-mesh draw.
 - [x] Android arm64 cross-build of the Vulkan viewport path.
 - [x] Scene-graph invalidation cleanup boundary for renderer-owned resources.
 - [x] Perspective viewport camera.
@@ -81,26 +87,31 @@ The editor shell is no longer considered source-only: CI compiles it, loads QML 
 - [x] Two-finger pan + pinch zoom input.
 - [x] Host mouse/wheel navigation.
 - [x] Perspective/Orthographic toggle and Reset View controls.
+- [x] Build-time GLSL-to-SPIR-V shader packaging through Qt ShaderTools/qsb.
+- [x] Dedicated native Vulkan renderer object separated from QML/input state.
+- [x] Renderer-local GPU mesh cache keyed by `ResourceId + contentHash`.
+- [x] Indexed vertex/index buffer upload for authored geometry.
+- [x] Grid.
+- [x] XYZ axes.
+- [x] Basic unlit authored mesh rendering.
+- [x] Mesh depth-test/depth-write policy using the Qt Quick render pass depth attachment.
+- [x] Qt Quick 2D depth writes disabled before first window exposure so QML overlays do not corrupt the 3D depth buffer.
+- [x] Color + depth clear scoped to the viewport rectangle.
 - [ ] Physical Android Vulkan lifecycle/suspend-resume validation. Deferred with APK/device testing.
-- [ ] Dedicated GPU upload/memory allocator abstraction for authored geometry.
+- [ ] Device-local/staging-buffer allocator abstraction for larger authored geometry; current cache intentionally uses the simpler validated host-visible upload path.
 - [ ] Vulkan pipeline cache persisted across sessions/devices where valid.
-- [ ] Depth buffer policy for custom 3D drawing.
 - [ ] MSAA policy and device quality fallback.
-- [ ] Grid.
-- [ ] XYZ axes.
-- [ ] Basic unlit authored mesh rendering.
 - [ ] Object ID picking.
 - [ ] Selection outline.
 
 The next Stage 3 implementation order is intentionally:
 
-1. shader/pipeline resource module;
-2. grid + XYZ axes;
-3. geometry upload boundary and unlit mesh path;
-4. depth/MSAA policy;
-5. ID picking;
-6. selection outline;
-7. Android physical lifecycle validation when APK testing is allowed.
+1. MSAA/sample-count policy with safe device fallback;
+2. object-ID picking;
+3. selection outline;
+4. device-local/staging allocator and upload batching before large imported scenes;
+5. pipeline-cache persistence;
+6. Android physical lifecycle validation when APK testing is allowed.
 
 Exit criterion: the real authored scene is visible/selectable in a stable Vulkan viewport across Android lifecycle changes.
 
@@ -121,7 +132,7 @@ At this point the first APK may become useful enough for internal testing, but p
 
 ## Stage 5 — Geometry resource and Edit Mode
 
-- [ ] Mesh asset/resource model separated from SceneObject.
+- [x] Mesh asset/resource model separated from SceneObject.
 - [ ] Vertex/half-edge(or equivalent topology) representation.
 - [ ] Vertex/Edge/Face selection.
 - [ ] Mesh edit transaction system.
