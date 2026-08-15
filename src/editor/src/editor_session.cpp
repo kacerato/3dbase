@@ -102,6 +102,10 @@ Scene* EditorSession::scene() noexcept { return document_ ? &document_->scene : 
 std::optional<ObjectId> EditorSession::createObject(ObjectType type, std::string name,
                                                      std::optional<ObjectId> parent) {
     if (!document_) return std::nullopt;
+    if (type == ObjectType::Mesh) {
+        const std::string geometryName = name.empty() ? "Mesh Geometry" : name + " Geometry";
+        return createMeshObject(MeshResource::makeCube(geometryName, 1.0F), std::move(name), parent);
+    }
     auto command = std::make_unique<CreateObjectCommand>(document_->scene, type, std::move(name), parent);
     auto* createdCommand = command.get();
     if (!commands_.execute(std::move(command))) return std::nullopt;

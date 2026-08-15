@@ -55,6 +55,7 @@ private:
     Scene& scene_;
     ObjectId object_{};
     std::vector<SceneObject> snapshot_;
+    std::vector<MeshResource> removedResources_;
 };
 
 class RenameObjectCommand final : public EditorCommand {

@@ -1,5 +1,6 @@
 #include "mobile3d/core/commands/object_commands.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace m3d {
@@ -81,11 +82,40 @@ DeleteObjectCommand::DeleteObjectCommand(Scene& scene, ObjectId object)
 
 bool DeleteObjectCommand::execute() {
     snapshot_ = scene_.removeSubtree(object_);
-    return !snapshot_.empty();
+    if (snapshot_.empty()) return false;
+
+    removedResources_.clear();
+    std::vector<ResourceId> candidates;
+    for (const auto& object : snapshot_) {
+        if (!object.meshResource ||
+            std::find(candidates.cbegin(), candidates.cend(), *object.meshResource) != candidates.cend()) {
+            continue;
+        }
+        candidates.push_back(*object.meshResource);
+    }
+
+    for (const auto resourceId : candidates) {
+        const auto* resource = scene_.findMeshResource(resourceId);
+        if (!resource) continue;
+        const MeshResource copy = *resource;
+        if (scene_.removeMeshResource(resourceId)) removedResources_.push_back(copy);
+    }
+    return true;
 }
 
 bool DeleteObjectCommand::undo() {
-    return scene_.restoreObjects(snapshot_);
+    std::vector<ResourceId> inserted;
+    inserted.reserve(removedResources_.size());
+    for (const auto& resource : removedResources_) {
+        if (!scene_.insertMeshResource(resource)) {
+            for (const auto id : inserted) (void)scene_.removeMeshResource(id);
+            return false;
+        }
+        inserted.push_back(resource.id);
+    }
+    if (scene_.restoreObjects(snapshot_)) return true;
+    for (const auto id : inserted) (void)scene_.removeMeshResource(id);
+    return false;
 }
 
 RenameObjectCommand::RenameObjectCommand(Scene& scene, ObjectId object, std::string newName)
