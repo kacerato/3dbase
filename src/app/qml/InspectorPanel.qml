@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -16,18 +18,18 @@ Rectangle {
     }
 
     function refreshFields() {
-        if (!controller.hasActiveObject)
+        if (!root.controller.hasActiveObject)
             return
-        nameField.text = controller.activeObjectName
-        posX.text = Number(controller.positionX).toFixed(3)
-        posY.text = Number(controller.positionY).toFixed(3)
-        posZ.text = Number(controller.positionZ).toFixed(3)
-        scaleX.text = Number(controller.scaleX).toFixed(3)
-        scaleY.text = Number(controller.scaleY).toFixed(3)
-        scaleZ.text = Number(controller.scaleZ).toFixed(3)
+        nameField.text = root.controller.activeObjectName
+        posX.text = Number(root.controller.positionX).toFixed(3)
+        posY.text = Number(root.controller.positionY).toFixed(3)
+        posZ.text = Number(root.controller.positionZ).toFixed(3)
+        scaleX.text = Number(root.controller.scaleX).toFixed(3)
+        scaleY.text = Number(root.controller.scaleY).toFixed(3)
+        scaleZ.text = Number(root.controller.scaleZ).toFixed(3)
     }
 
-    Component.onCompleted: refreshFields()
+    Component.onCompleted: root.refreshFields()
 
     Connections {
         target: root.controller
@@ -93,7 +95,7 @@ Rectangle {
                     Layout.leftMargin: 12
                     Layout.rightMargin: 12
                     placeholderText: "Name"
-                    onEditingFinished: root.controller.renameActive(text)
+                    onEditingFinished: root.controller.renameActive(nameField.text)
                 }
 
                 Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#252a33"; Layout.topMargin: 4 }

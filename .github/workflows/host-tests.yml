@@ -44,8 +44,8 @@ jobs:
         run: cmake --build build-qt --parallel
       - name: Core + Editor tests under Qt build
         run: ctest --test-dir build-qt --output-on-failure
-      - name: QML static analysis
-        run: cmake --build build-qt --target mobile3d_studio_qmllint
+      - name: QML static analysis (zero warnings)
+        run: $QT_ROOT_DIR/bin/qmllint --max-warnings 0 @build-qt/src/app/.rcc/qmllint/mobile3d_studio.rsp
       - name: QML runtime smoke test
         env:
           QT_QPA_PLATFORM: offscreen

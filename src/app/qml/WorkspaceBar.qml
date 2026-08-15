@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 
@@ -19,13 +21,14 @@ Rectangle {
         model: root.controller.workspaceNames
 
         delegate: Button {
+            id: workspaceButton
             required property string modelData
 
             height: 36
-            text: modelData
+            text: workspaceButton.modelData
             checkable: true
-            checked: root.controller.workspace === modelData
-            onClicked: root.controller.setWorkspace(modelData)
+            checked: root.controller.workspace === workspaceButton.modelData
+            onClicked: root.controller.setWorkspace(workspaceButton.modelData)
         }
     }
 }

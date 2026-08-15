@@ -3,8 +3,8 @@
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
-#include <QQmlContext>
 #include <QQuickStyle>
+#include <QVariantMap>
 
 #include <algorithm>
 
@@ -24,7 +24,9 @@ int main(int argc, char* argv[]) {
     });
 
     QQmlApplicationEngine engine;
-    engine.rootContext()->setContextProperty(QStringLiteral("editor"), &controller);
+    QVariantMap initialProperties;
+    initialProperties.insert(QStringLiteral("controller"), QVariant::fromValue(&controller));
+    engine.setInitialProperties(initialProperties);
     engine.loadFromModule(QStringLiteral("Mobile3D"), QStringLiteral("Main"));
     if (engine.rootObjects().isEmpty()) {
         return -1;

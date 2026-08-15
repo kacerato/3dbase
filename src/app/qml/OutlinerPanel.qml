@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -43,6 +45,8 @@ Rectangle {
             model: root.controller.outlinerModel
 
             delegate: Rectangle {
+                id: rowRoot
+
                 required property string objectId
                 required property string displayName
                 required property string typeName
@@ -53,16 +57,16 @@ Rectangle {
 
                 width: ListView.view.width
                 height: 48
-                color: selected ? (active ? "#244b75" : "#20364f") : (mouseArea.pressed ? "#20242c" : "transparent")
+                color: rowRoot.selected ? (rowRoot.active ? "#244b75" : "#20364f") : (mouseArea.pressed ? "#20242c" : "transparent")
 
                 RowLayout {
                     anchors.fill: parent
-                    anchors.leftMargin: 10 + depth * 18
+                    anchors.leftMargin: 10 + rowRoot.depth * 18
                     anchors.rightMargin: 8
                     spacing: 8
 
                     Label {
-                        text: hasChildren ? "▸" : "·"
+                        text: rowRoot.hasChildren ? "▸" : "·"
                         color: "#707887"
                         Layout.preferredWidth: 14
                     }
@@ -72,13 +76,13 @@ Rectangle {
                         spacing: 1
                         Label {
                             Layout.fillWidth: true
-                            text: displayName
+                            text: rowRoot.displayName
                             color: "#edf0f4"
                             elide: Text.ElideRight
                         }
                         Label {
                             Layout.fillWidth: true
-                            text: typeName
+                            text: rowRoot.typeName
                             color: "#7f8794"
                             font.pixelSize: 11
                             elide: Text.ElideRight
@@ -89,8 +93,8 @@ Rectangle {
                 MouseArea {
                     id: mouseArea
                     anchors.fill: parent
-                    onClicked: root.controller.selectObject(objectId, false)
-                    onPressAndHold: root.controller.selectObject(objectId, true)
+                    onClicked: root.controller.selectObject(rowRoot.objectId, false)
+                    onPressAndHold: root.controller.selectObject(rowRoot.objectId, true)
                 }
             }
 

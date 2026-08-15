@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -105,13 +107,13 @@ Rectangle {
                 model: root.controller.recentProjects
 
                 delegate: Button {
+                    id: recentButton
                     required property string modelData
                     required property int index
 
                     Layout.fillWidth: true
-                    text: modelData
-                    horizontalAlignment: Text.AlignLeft
-                    onClicked: root.controller.openRecent(index)
+                    text: recentButton.modelData
+                    onClicked: root.controller.openRecent(recentButton.index)
                 }
             }
 

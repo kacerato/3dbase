@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
@@ -5,13 +7,15 @@ import QtQuick.Layouts
 ApplicationWindow {
     id: root
 
+    required property var controller
+
     visible: true
     width: 1280
     height: 720
     minimumWidth: 360
     minimumHeight: 520
     color: "#0d0f13"
-    title: editor.projectOpen ? editor.projectName + " — Mobile3D Studio" : "Mobile3D Studio"
+    title: root.controller.projectOpen ? root.controller.projectName + " — Mobile3D Studio" : "Mobile3D Studio"
 
     property bool compact: width < 900 || height > width
     property bool outlinerPaneVisible: true
@@ -22,7 +26,7 @@ ApplicationWindow {
 
         TopBar {
             width: parent.width
-            controller: editor
+            controller: root.controller
             compact: root.compact
             onToggleOutliner: {
                 if (root.compact)
@@ -41,20 +45,20 @@ ApplicationWindow {
         WorkspaceBar {
             width: parent.width
             height: visible ? implicitHeight : 0
-            visible: editor.projectOpen
-            controller: editor
+            visible: root.controller.projectOpen
+            controller: root.controller
         }
     }
 
     ProjectHome {
         anchors.fill: parent
-        visible: !editor.projectOpen
-        controller: editor
+        visible: !root.controller.projectOpen
+        controller: root.controller
     }
 
     Item {
         anchors.fill: parent
-        visible: editor.projectOpen
+        visible: root.controller.projectOpen
 
         ColumnLayout {
             anchors.fill: parent
@@ -82,7 +86,7 @@ ApplicationWindow {
                     }
 
                     OutlinerPanel {
-                        controller: editor
+                        controller: root.controller
                         visible: root.outlinerPaneVisible
                         SplitView.preferredWidth: 270
                         SplitView.minimumWidth: 210
@@ -90,13 +94,13 @@ ApplicationWindow {
                     }
 
                     ViewportPlaceholder {
-                        controller: editor
+                        controller: root.controller
                         SplitView.fillWidth: true
                         SplitView.minimumWidth: 320
                     }
 
                     InspectorPanel {
-                        controller: editor
+                        controller: root.controller
                         visible: root.inspectorPaneVisible
                         SplitView.preferredWidth: 310
                         SplitView.minimumWidth: 250
@@ -110,7 +114,7 @@ ApplicationWindow {
 
                     ViewportPlaceholder {
                         anchors.fill: parent
-                        controller: editor
+                        controller: root.controller
                     }
 
                     Row {
@@ -146,7 +150,7 @@ ApplicationWindow {
                     anchors.leftMargin: 10
                     anchors.verticalCenter: parent.verticalCenter
                     width: parent.width - 20
-                    text: editor.statusMessage.length > 0 ? editor.statusMessage : editor.projectPath
+                    text: root.controller.statusMessage.length > 0 ? root.controller.statusMessage : root.controller.projectPath
                     color: "#7f8794"
                     font.pixelSize: 11
                     elide: Text.ElideMiddle
@@ -160,12 +164,12 @@ ApplicationWindow {
         edge: Qt.LeftEdge
         width: Math.min(root.width * 0.86, 360)
         height: root.height
-        enabled: root.compact && editor.projectOpen
+        enabled: root.compact && root.controller.projectOpen
         modal: true
 
         OutlinerPanel {
             anchors.fill: parent
-            controller: editor
+            controller: root.controller
         }
     }
 
@@ -174,18 +178,18 @@ ApplicationWindow {
         edge: Qt.RightEdge
         width: Math.min(root.width * 0.90, 390)
         height: root.height
-        enabled: root.compact && editor.projectOpen
+        enabled: root.compact && root.controller.projectOpen
         modal: true
 
         InspectorPanel {
             anchors.fill: parent
-            controller: editor
+            controller: root.controller
         }
     }
 
     Dialog {
         id: recoveryDialog
-        visible: editor.recoveryAvailable
+        visible: root.controller.recoveryAvailable
         modal: true
         closePolicy: Popup.NoAutoClose
         title: "Recovery autosave found"
@@ -205,12 +209,12 @@ ApplicationWindow {
                 Button {
                     Layout.fillWidth: true
                     text: "Discard"
-                    onClicked: editor.discardAutosave()
+                    onClicked: root.controller.discardAutosave()
                 }
                 Button {
                     Layout.fillWidth: true
                     text: "Recover"
-                    onClicked: editor.recoverAutosave()
+                    onClicked: root.controller.recoverAutosave()
                 }
             }
         }
