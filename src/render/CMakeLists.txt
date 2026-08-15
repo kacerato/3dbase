@@ -1,5 +1,6 @@
 add_library(mobile3d_render STATIC
     src/render_snapshot.cpp
+    src/viewport_camera.cpp
 )
 
 add_library(Mobile3D::Render ALIAS mobile3d_render)

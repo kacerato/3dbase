@@ -6,6 +6,7 @@ add_executable(mobile3d_core_tests
     test_project.cpp
     test_editor_session.cpp
     test_render_snapshot.cpp
+    test_viewport_camera.cpp
 )
 
 target_link_libraries(mobile3d_core_tests
