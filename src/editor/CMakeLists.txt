@@ -1,0 +1,13 @@
+add_library(mobile3d_editor STATIC
+    src/editor_session.cpp
+)
+
+add_library(Mobile3D::Editor ALIAS mobile3d_editor)
+
+target_include_directories(mobile3d_editor
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(mobile3d_editor PUBLIC Mobile3D::Core)
+mobile3d_apply_compiler_options(mobile3d_editor)

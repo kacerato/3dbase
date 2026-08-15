@@ -1,0 +1,22 @@
+name: Host C++ Tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  core-editor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >-
+          cmake -S . -B build
+          -DMOBILE3D_BUILD_TESTS=ON
+          -DMOBILE3D_BUILD_QT_APP=OFF
+          -DMOBILE3D_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
