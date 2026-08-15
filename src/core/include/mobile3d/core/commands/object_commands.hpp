@@ -25,6 +25,24 @@ private:
     bool initialized_{false};
 };
 
+class CreateMeshObjectCommand final : public EditorCommand {
+public:
+    CreateMeshObjectCommand(Scene& scene, MeshResource resource, std::string name,
+                            std::optional<ObjectId> parent = std::nullopt);
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "Create Mesh Object"; }
+    [[nodiscard]] bool execute() override;
+    [[nodiscard]] bool undo() override;
+    [[nodiscard]] ObjectId createdId() const noexcept { return object_.id; }
+    [[nodiscard]] ResourceId resourceId() const noexcept { return resource_.id; }
+
+private:
+    Scene& scene_;
+    MeshResource resource_;
+    SceneObject object_;
+    bool initialized_{false};
+};
+
 class DeleteObjectCommand final : public EditorCommand {
 public:
     DeleteObjectCommand(Scene& scene, ObjectId object);

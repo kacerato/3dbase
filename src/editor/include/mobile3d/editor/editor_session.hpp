@@ -51,6 +51,8 @@ public:
 
     [[nodiscard]] std::optional<ObjectId> createObject(
         ObjectType type, std::string name, std::optional<ObjectId> parent = std::nullopt);
+    [[nodiscard]] std::optional<ObjectId> createMeshObject(
+        MeshResource resource, std::string name, std::optional<ObjectId> parent = std::nullopt);
     [[nodiscard]] bool deleteObject(ObjectId object);
     [[nodiscard]] bool deleteSelection();
     [[nodiscard]] bool renameObject(ObjectId object, std::string name);

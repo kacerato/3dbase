@@ -45,18 +45,43 @@ TEST_CASE("editor session owns project lifecycle and dirty state") {
     REQUIRE(session.undo());
     REQUIRE(!session.scene()->contains(*object));
     REQUIRE(session.canRedo());
-
     REQUIRE(session.redo());
     REQUIRE(session.scene()->contains(*object));
     REQUIRE(session.saveProject(&error));
     REQUIRE(!session.isDirty());
 }
 
+TEST_CASE("mesh primitive creation keeps object and geometry in one undoable command") {
+    const auto path = uniqueProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Mesh Command", &error));
+
+    const auto object = session.createMeshObject(m3d::MeshResource::makeCube("Cube Geometry", 2.0F), "Cube");
+    REQUIRE(object.has_value());
+    REQUIRE(session.scene()->size() == 1);
+    REQUIRE(session.scene()->meshResourceCount() == 1);
+    const auto* sceneObject = session.scene()->find(*object);
+    REQUIRE(sceneObject != nullptr);
+    REQUIRE(sceneObject->meshResource.has_value());
+    const auto resource = *sceneObject->meshResource;
+    REQUIRE(session.scene()->findMeshResource(resource) != nullptr);
+
+    REQUIRE(session.undo());
+    REQUIRE(session.scene()->size() == 0);
+    REQUIRE(session.scene()->meshResourceCount() == 0);
+
+    REQUIRE(session.redo());
+    REQUIRE(session.scene()->contains(*object));
+    REQUIRE(session.scene()->meshResourceCount() == 1);
+    REQUIRE(session.scene()->find(*object)->meshResource == resource);
+}
+
 TEST_CASE("editor session autosave recovery stays dirty until primary save") {
     const auto path = uniqueProjectPath();
     ProjectCleanup cleanup(path);
     std::string error;
-
     {
         m3d::EditorSession session;
         REQUIRE(session.createProject(path, "Recovery Test", &error));
@@ -64,7 +89,6 @@ TEST_CASE("editor session autosave recovery stays dirty until primary save") {
         REQUIRE(session.writeAutosave(&error));
         REQUIRE(session.hasAutosave());
     }
-
     m3d::EditorSession reopened;
     REQUIRE(reopened.openProject(path, &error));
     REQUIRE(reopened.scene()->size() == 0);
@@ -82,7 +106,6 @@ TEST_CASE("editor session can discard recovery without touching primary scene") 
     ProjectCleanup cleanup(path);
     m3d::EditorSession session;
     std::string error;
-
     REQUIRE(session.createProject(path, "Discard Test", &error));
     REQUIRE(session.createObject(m3d::ObjectType::Mesh, "Unsaved Mesh").has_value());
     REQUIRE(session.writeAutosave(&error));
@@ -97,21 +120,18 @@ TEST_CASE("delete selection handles selected parent and child as one valid trans
     ProjectCleanup cleanup(path);
     m3d::EditorSession session;
     std::string error;
-
     REQUIRE(session.createProject(path, "Delete Test", &error));
     const auto parent = session.createObject(m3d::ObjectType::Empty, "Parent");
     REQUIRE(parent.has_value());
     const auto child = session.createObject(m3d::ObjectType::Mesh, "Child", *parent);
     REQUIRE(child.has_value());
     REQUIRE(session.scene()->size() == 2);
-
     REQUIRE(session.select(*parent, m3d::SelectionMode::Replace));
     REQUIRE(session.select(*child, m3d::SelectionMode::Add));
     REQUIRE(session.selection().size() == 2);
     REQUIRE(session.deleteSelection());
     REQUIRE(session.scene()->size() == 0);
     REQUIRE(session.selection().empty());
-
     REQUIRE(session.undo());
     REQUIRE(session.scene()->size() == 2);
     REQUIRE(session.scene()->find(*child)->parent == parent);
@@ -122,7 +142,6 @@ TEST_CASE("workspace changes are editor state and do not dirty the scene") {
     ProjectCleanup cleanup(path);
     m3d::EditorSession session;
     std::string error;
-
     REQUIRE(session.createProject(path, "Workspace Test", &error));
     const auto previousRevision = session.uiRevision();
     session.setWorkspace(m3d::Workspace::Modeling);
