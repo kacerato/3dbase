@@ -38,8 +38,8 @@ TEST_CASE("render snapshot is an immutable deterministic copy of scene presentat
     REQUIRE(geometry->vertices.size() == 24);
     REQUIRE(geometry->indices.size() == 36);
     REQUIRE(geometry->bounds.has_value());
-    REQUIRE(geometry->bounds->min == m3d::Vec3{-1.0F, -1.0F, -1.0F});
-    REQUIRE(geometry->bounds->max == m3d::Vec3{1.0F, 1.0F, 1.0F});
+    REQUIRE((geometry->bounds->min == m3d::Vec3{-1.0F, -1.0F, -1.0F}));
+    REQUIRE((geometry->bounds->max == m3d::Vec3{1.0F, 1.0F, 1.0F}));
 
     m3d::Transform changedTransform = authoredTransform;
     changedTransform.position.x = 99.0F;
