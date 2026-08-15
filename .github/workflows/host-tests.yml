@@ -31,12 +31,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers xvfb xauth
-      - name: Install Qt 6.8
+      - name: Install Qt 6.8 + Shader Tools
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.*'
           host: linux
           target: desktop
+          modules: 'qtshadertools'
           cache: true
       - name: Configure Qt shell
         run: >-
@@ -55,7 +56,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QT_QUICK_BACKEND: software
         run: ./build-qt/src/app/Mobile3DStudio --smoke-test
-      - name: Native Vulkan command smoke test
+      - name: Native Vulkan + embedded SPIR-V smoke test
         shell: bash
         run: |
           VULKAN_ICD="$(find /usr/share/vulkan/icd.d -maxdepth 1 -type f -name 'lvp_icd*.json' | head -n 1)"
@@ -85,15 +86,16 @@ jobs:
             "platforms;android-36" \
             "build-tools;36.0.0" \
             "ndk;${MOBILE3D_NDK_VERSION}"
-      - name: Install Qt 6.8.3 for Android arm64-v8a
+      - name: Install Qt 6.8.3 + Shader Tools for Android arm64-v8a
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.3'
           host: linux
           target: android
           arch: android_arm64_v8a
+          modules: 'qtshadertools'
           cache: true
-          cache-key-prefix: install-qt-action-android-arm64-6.8.3
+          cache-key-prefix: install-qt-action-android-arm64-6.8.3-shadertools
       - name: Verify Qt Android environment
         shell: bash
         run: |

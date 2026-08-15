@@ -1,4 +1,4 @@
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 ShaderTools)
 
 qt_standard_project_setup(REQUIRES 6.8)
 
@@ -8,6 +8,8 @@ qt_add_executable(mobile3d_studio
     qt/editor_controller.hpp
     qt/outliner_model.cpp
     qt/outliner_model.hpp
+    qt/vulkan_shader_library.cpp
+    qt/vulkan_shader_library.hpp
     qt/vulkan_viewport.cpp
     qt/vulkan_viewport.hpp
 )
@@ -25,6 +27,17 @@ qt_add_qml_module(mobile3d_studio
         qml/OutlinerPanel.qml
         qml/InspectorPanel.qml
         qml/ViewportPlaceholder.qml
+)
+
+qt_add_shaders(mobile3d_studio "mobile3d_viewport_shaders"
+    PREFIX
+        "/"
+    NOGLSL
+    NOHLSL
+    NOMSL
+    FILES
+        shaders/viewport_line.vert
+        shaders/viewport_line.frag
 )
 
 target_include_directories(mobile3d_studio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/qt)

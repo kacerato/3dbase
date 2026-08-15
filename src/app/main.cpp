@@ -1,7 +1,9 @@
 #include "editor_controller.hpp"
+#include "vulkan_shader_library.hpp"
 #include "vulkan_viewport.hpp"
 
 #include <QCoreApplication>
+#include <QDebug>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
@@ -39,6 +41,14 @@ int main(int argc, char* argv[]) {
 #endif
 
     QQuickStyle::setStyle(QStringLiteral("Basic"));
+
+    if (vulkanSmokeTest) {
+        QString shaderError;
+        if (!VulkanShaderLibrary::validateViewportLineShaders(&shaderError)) {
+            qCritical().noquote() << shaderError;
+            return 5;
+        }
+    }
 
     EditorController controller;
     if (vulkanSmokeTest) {
