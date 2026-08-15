@@ -24,7 +24,10 @@ TEST_CASE("project repository creates saves and reopens a versioned project") {
     REQUIRE(std::filesystem::exists(path / "project.m3dproj"));
     REQUIRE(std::filesystem::is_directory(path / "textures"));
 
+    const auto resource = project->scene.createMeshResource(m3d::MeshResource::makeCube("Cube Geometry", 1.0F));
+    REQUIRE(!resource.isNull());
     const auto cube = project->scene.createObject(m3d::ObjectType::Mesh, "Cube");
+    REQUIRE(project->scene.assignMesh(cube, resource));
     m3d::Transform transform;
     transform.position = {1.0F, 2.0F, 3.0F};
     REQUIRE(project->scene.setTransform(cube, transform));
@@ -34,8 +37,14 @@ TEST_CASE("project repository creates saves and reopens a versioned project") {
     REQUIRE(reopened.has_value());
     REQUIRE(reopened->manifest.name == "Test Project");
     REQUIRE(reopened->scene.size() == 1);
+    REQUIRE(reopened->scene.meshResourceCount() == 1);
     REQUIRE(reopened->scene.find(cube) != nullptr);
     REQUIRE(reopened->scene.find(cube)->localTransform.position == transform.position);
+    REQUIRE(reopened->scene.find(cube)->meshResource == resource);
+    const auto* reopenedMesh = reopened->scene.findMeshResource(resource);
+    REQUIRE(reopenedMesh != nullptr);
+    REQUIRE(reopenedMesh->vertices.size() == 24);
+    REQUIRE(reopenedMesh->indices.size() == 36);
 
     std::filesystem::remove_all(path);
 }

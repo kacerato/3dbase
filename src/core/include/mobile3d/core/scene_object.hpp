@@ -28,6 +28,7 @@ struct SceneObject final {
     ObjectType type{ObjectType::Empty};
     Transform localTransform{};
     std::optional<ObjectId> parent{};
+    std::optional<ResourceId> meshResource{};
     bool visible{true};
     bool locked{false};
 };

@@ -8,6 +8,8 @@ TEST_CASE("render snapshot is an immutable deterministic copy of scene presentat
 
     const auto parent = scene.createObject(m3d::ObjectType::Empty, "Parent");
     const auto mesh = scene.createObject(m3d::ObjectType::Mesh, "Mesh", parent);
+    const auto resource = scene.createMeshResource(m3d::MeshResource::makeCube("Geometry", 2.0F));
+    REQUIRE(scene.assignMesh(mesh, resource));
 
     m3d::Transform authoredTransform;
     authoredTransform.position = {2.0F, 3.0F, 4.0F};
@@ -19,37 +21,49 @@ TEST_CASE("render snapshot is an immutable deterministic copy of scene presentat
     REQUIRE(snapshot.sceneRevision() == 17);
     REQUIRE(snapshot.selectionRevision() == 9);
     REQUIRE(snapshot.size() == 2);
+    REQUIRE(snapshot.meshes().size() == 1);
 
     const auto* meshSnapshot = snapshot.find(mesh);
     REQUIRE(meshSnapshot != nullptr);
     REQUIRE(meshSnapshot->type == m3d::ObjectType::Mesh);
     REQUIRE(meshSnapshot->parent == parent);
+    REQUIRE(meshSnapshot->meshResource == resource);
     REQUIRE(meshSnapshot->localTransform == authoredTransform);
     REQUIRE(meshSnapshot->visible);
     REQUIRE(meshSnapshot->selected);
     REQUIRE(meshSnapshot->active);
 
+    const auto* geometry = snapshot.findMesh(resource);
+    REQUIRE(geometry != nullptr);
+    REQUIRE(geometry->vertices.size() == 24);
+    REQUIRE(geometry->indices.size() == 36);
+    REQUIRE(geometry->bounds.has_value());
+    REQUIRE(geometry->bounds->min == m3d::Vec3{-1.0F, -1.0F, -1.0F});
+    REQUIRE(geometry->bounds->max == m3d::Vec3{1.0F, 1.0F, 1.0F});
+
     m3d::Transform changedTransform = authoredTransform;
     changedTransform.position.x = 99.0F;
     REQUIRE(scene.setTransform(mesh, changedTransform));
+    scene.findMeshResource(resource)->vertices.front().position.x = 77.0F;
     selection.clear();
 
     meshSnapshot = snapshot.find(mesh);
+    geometry = snapshot.findMesh(resource);
     REQUIRE(meshSnapshot != nullptr);
     REQUIRE(meshSnapshot->localTransform == authoredTransform);
     REQUIRE(meshSnapshot->selected);
     REQUIRE(meshSnapshot->active);
+    REQUIRE(geometry != nullptr);
+    REQUIRE(geometry->vertices.front().position.x == -1.0F);
 }
 
 TEST_CASE("render snapshot retains hidden objects and their explicit visibility state") {
     m3d::Scene scene;
     m3d::SelectionModel selection;
-
     const auto hidden = scene.createObject(m3d::ObjectType::Light, "Hidden Light");
     auto* object = scene.find(hidden);
     REQUIRE(object != nullptr);
     object->visible = false;
-
     const auto snapshot = m3d::RenderSnapshotBuilder::build(scene, selection, 1, 1);
     const auto* hiddenSnapshot = snapshot.find(hidden);
     REQUIRE(hiddenSnapshot != nullptr);
@@ -61,22 +75,18 @@ TEST_CASE("render snapshot retains hidden objects and their explicit visibility 
 TEST_CASE("render snapshot ordering does not inherit unordered scene storage order") {
     m3d::Scene scene;
     m3d::SelectionModel selection;
-
     const m3d::ObjectId highId(9, 1);
     const m3d::ObjectId lowId(2, 7);
-
     m3d::SceneObject high;
     high.id = highId;
     high.name = "High";
     high.type = m3d::ObjectType::Camera;
     REQUIRE(scene.insertObject(high));
-
     m3d::SceneObject low;
     low.id = lowId;
     low.name = "Low";
     low.type = m3d::ObjectType::Mesh;
     REQUIRE(scene.insertObject(low));
-
     const auto snapshot = m3d::RenderSnapshotBuilder::build(scene, selection, 3, 4);
     REQUIRE(snapshot.size() == 2);
     REQUIRE(snapshot.objects().at(0).id == lowId);

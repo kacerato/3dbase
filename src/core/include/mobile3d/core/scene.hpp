@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mobile3d/core/mesh_resource.hpp"
 #include "mobile3d/core/scene_object.hpp"
 
 #include <optional>
@@ -23,6 +24,16 @@ public:
     [[nodiscard]] std::vector<ObjectId> childrenOf(ObjectId parent) const;
     [[nodiscard]] std::vector<SceneObject> objects() const;
 
+    [[nodiscard]] ResourceId createMeshResource(MeshResource resource);
+    [[nodiscard]] bool insertMeshResource(MeshResource resource);
+    [[nodiscard]] bool containsResource(ResourceId id) const;
+    [[nodiscard]] MeshResource* findMeshResource(ResourceId id);
+    [[nodiscard]] const MeshResource* findMeshResource(ResourceId id) const;
+    [[nodiscard]] std::vector<MeshResource> meshResources() const;
+    [[nodiscard]] bool assignMesh(ObjectId object, std::optional<ResourceId> resource);
+    [[nodiscard]] bool removeMeshResource(ResourceId resource);
+    [[nodiscard]] std::size_t meshResourceCount() const noexcept { return meshResources_.size(); }
+
     [[nodiscard]] bool rename(ObjectId id, std::string name);
     [[nodiscard]] bool setTransform(ObjectId id, const Transform& transform);
     [[nodiscard]] bool reparent(ObjectId id, std::optional<ObjectId> newParent);
@@ -39,6 +50,7 @@ private:
     void collectSubtree(ObjectId root, std::vector<ObjectId>& out) const;
 
     std::unordered_map<ObjectId, SceneObject, ObjectIdHash> objects_;
+    std::unordered_map<ResourceId, MeshResource, ResourceIdHash> meshResources_;
 };
 
 } // namespace m3d
