@@ -77,7 +77,7 @@ private:
     QPointF lastMousePosition_;
     QPointF lastTouchCentroid_;
     float lastTouchSpan_{0.0F};
-    int lastTouchPointCount_{0};
+    qsizetype lastTouchPointCount_{0};
     Qt::MouseButton navigationButton_{Qt::NoButton};
     bool vulkanActive_{false};
     QString backendName_{QStringLiteral("Unavailable")};
