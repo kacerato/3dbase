@@ -1,9 +1,7 @@
 #include "vulkan_shader_library.hpp"
 
 #include <QFile>
-#include <QShader>
-#include <QShaderCode>
-#include <QShaderKey>
+#include <rhi/qshader.h>
 
 #include <cstdint>
 #include <cstring>
