@@ -51,3 +51,65 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QT_QUICK_BACKEND: software
         run: ./build-qt/src/app/Mobile3DStudio --smoke-test
+
+  android-arm64:
+    name: Android arm64 native cross-build
+    runs-on: ubuntu-latest
+    env:
+      MOBILE3D_NDK_VERSION: 27.2.12479018
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+      - name: Install supported Android SDK/NDK packages
+        shell: bash
+        run: |
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;${MOBILE3D_NDK_VERSION}"
+      - name: Install Qt 6.8 for Android arm64-v8a
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: linux
+          target: android
+          arch: android_arm64_v8a
+          cache: true
+          cache-key-prefix: install-qt-action-android-arm64
+      - name: Verify Qt Android environment
+        shell: bash
+        run: |
+          test -x "$QT_ROOT_DIR/bin/qt-cmake"
+          test -n "$QT_HOST_PATH"
+          test -d "$QT_HOST_PATH"
+          "$QT_ROOT_DIR/bin/qmake" -query QT_VERSION
+          "$QT_ROOT_DIR/bin/qmake" -query QT_HOST_PREFIX
+      - name: Configure Android arm64 native target
+        shell: bash
+        run: |
+          "$QT_ROOT_DIR/bin/qt-cmake" \
+            -S . \
+            -B build-android \
+            -G Ninja \
+            -DANDROID_SDK_ROOT="$ANDROID_SDK_ROOT" \
+            -DANDROID_NDK_ROOT="$ANDROID_SDK_ROOT/ndk/${MOBILE3D_NDK_VERSION}" \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-28 \
+            -DMOBILE3D_BUILD_QT_APP=ON \
+            -DMOBILE3D_BUILD_TESTS=OFF \
+            -DMOBILE3D_WARNINGS_AS_ERRORS=ON
+      - name: Cross-build native application target only
+        run: cmake --build build-android --target mobile3d_studio --parallel
+      - name: Verify generated native library
+        shell: bash
+        run: |
+          test -f build-android/src/app/libMobile3DStudio_arm64-v8a.so \
+            || test -f build-android/src/app/libMobile3DStudio.so
+          find build-android/src/app -maxdepth 2 -type f \( -name '*.so' -o -name 'AndroidManifest.xml' \) -print
