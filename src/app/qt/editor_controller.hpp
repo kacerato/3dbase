@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mobile3d/editor/editor_session.hpp"
+#include "mobile3d/render/render_snapshot.hpp"
 
 #include <QAbstractItemModel>
 #include <QObject>
@@ -70,6 +71,19 @@ public:
     [[nodiscard]] QString statusMessage() const { return statusMessage_; }
     [[nodiscard]] QStringList recentProjects() const { return recentProjects_; }
     [[nodiscard]] bool recoveryAvailable() const noexcept { return recoveryAvailable_; }
+
+    // Render-thread synchronization calls this only while the GUI thread is blocked by
+    // Qt Quick's synchronization phase. The returned value owns a complete copy and
+    // contains no Scene, SelectionModel, QObject, or GPU pointers.
+    [[nodiscard]] m3d::RenderSceneSnapshot renderSnapshot() const {
+        const auto* scene = session_.scene();
+        if (!scene) {
+            return {};
+        }
+        return m3d::RenderSnapshotBuilder::build(*scene, session_.selection(),
+                                                 session_.sceneRevision(),
+                                                 session_.selectionRevision());
+    }
 
     Q_INVOKABLE bool createProject(const QString& name);
     Q_INVOKABLE bool openProject(const QString& path);

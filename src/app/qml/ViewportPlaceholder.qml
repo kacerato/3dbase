@@ -8,9 +8,15 @@ Rectangle {
 
     required property var controller
 
-    color: "#0b0d11"
+    color: nativeViewport.vulkanActive ? "transparent" : "#0b0d11"
     border.color: "#20242b"
     clip: true
+
+    VulkanViewport {
+        id: nativeViewport
+        anchors.fill: parent
+        controller: root.controller
+    }
 
     Rectangle {
         anchors.centerIn: parent
@@ -30,7 +36,7 @@ Rectangle {
         spacing: 8
         Label {
             anchors.horizontalCenter: parent.horizontalCenter
-            text: "Vulkan viewport — Stage 3"
+            text: nativeViewport.vulkanActive ? "Vulkan viewport foundation" : "Viewport fallback"
             color: "#d6dae0"
             font.pixelSize: 20
             font.weight: Font.DemiBold
@@ -41,11 +47,32 @@ Rectangle {
             color: "#747d8c"
         }
         Label {
-            width: Math.min(440, root.width - 40)
-            text: "The editor shell is connected to the real Scene now. This area stays intentionally non-rendering until the Vulkan lifecycle, swapchain, picking and camera systems are implemented together."
+            width: Math.min(460, root.width - 40)
+            text: nativeViewport.vulkanActive
+                  ? "Native Vulkan commands are recording inside this viewport using an immutable render snapshot. Mesh drawing, camera and picking are the next Stage 3 slices."
+                  : "Graphics backend: " + nativeViewport.backendName + ". Android production builds request Vulkan; host smoke tests intentionally keep a software fallback."
             color: "#626b78"
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
+        }
+    }
+
+    Rectangle {
+        anchors.left: parent.left
+        anchors.bottom: parent.bottom
+        anchors.margins: 10
+        width: backendLabel.implicitWidth + 16
+        height: 28
+        radius: 6
+        color: "#a611141a"
+        border.color: "#303641"
+
+        Label {
+            id: backendLabel
+            anchors.centerIn: parent
+            text: nativeViewport.backendName + (nativeViewport.vulkanActive ? " • native underlay" : " • fallback")
+            color: "#9aa3b1"
+            font.pixelSize: 11
         }
     }
 

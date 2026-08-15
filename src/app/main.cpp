@@ -4,6 +4,8 @@
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
+#include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QVariantMap>
 
 #include <algorithm>
@@ -13,6 +15,22 @@ int main(int argc, char* argv[]) {
     QCoreApplication::setOrganizationName(QStringLiteral("kacerato"));
     QCoreApplication::setOrganizationDomain(QStringLiteral("kacerato.dev"));
     QCoreApplication::setApplicationName(QStringLiteral("Mobile3DStudio"));
+
+    const auto arguments = QCoreApplication::arguments();
+    const bool smokeTest = std::find(arguments.cbegin(), arguments.cend(),
+                                     QStringLiteral("--smoke-test")) != arguments.cend();
+    const bool requestedVulkan = std::find(arguments.cbegin(), arguments.cend(),
+                                           QStringLiteral("--vulkan")) != arguments.cend();
+
+#if defined(Q_OS_ANDROID)
+    if (!smokeTest) {
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+    }
+#else
+    if (!smokeTest && requestedVulkan) {
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+    }
+#endif
 
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
@@ -32,9 +50,6 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    const auto arguments = QCoreApplication::arguments();
-    const bool smokeTest = std::find(arguments.cbegin(), arguments.cend(),
-                                     QStringLiteral("--smoke-test")) != arguments.cend();
     if (smokeTest) {
         return 0;
     }

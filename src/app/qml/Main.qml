@@ -14,7 +14,7 @@ ApplicationWindow {
     height: 720
     minimumWidth: 360
     minimumHeight: 520
-    color: "#0d0f13"
+    color: root.controller.projectOpen ? "transparent" : "#0d0f13"
     title: root.controller.projectOpen ? root.controller.projectName + " — Mobile3D Studio" : "Mobile3D Studio"
 
     property bool compact: width < 900 || height > width

@@ -8,6 +8,8 @@ qt_add_executable(mobile3d_studio
     qt/editor_controller.hpp
     qt/outliner_model.cpp
     qt/outliner_model.hpp
+    qt/vulkan_viewport.cpp
+    qt/vulkan_viewport.hpp
 )
 
 qt_add_qml_module(mobile3d_studio
@@ -27,6 +29,7 @@ target_include_directories(mobile3d_studio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/q
 target_link_libraries(mobile3d_studio
     PRIVATE
         Mobile3D::Editor
+        Mobile3D::Render
         Qt6::Core
         Qt6::Gui
         Qt6::Qml
