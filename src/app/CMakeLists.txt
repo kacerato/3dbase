@@ -12,6 +12,8 @@ qt_add_executable(mobile3d_studio
     qt/vulkan_shader_library.hpp
     qt/vulkan_viewport.cpp
     qt/vulkan_viewport.hpp
+    qt/vulkan_viewport_renderer.cpp
+    qt/vulkan_viewport_renderer.hpp
 )
 
 qt_add_qml_module(mobile3d_studio
@@ -38,6 +40,8 @@ qt_add_shaders(mobile3d_studio "mobile3d_viewport_shaders"
     FILES
         shaders/viewport_line.vert
         shaders/viewport_line.frag
+        shaders/viewport_mesh.vert
+        shaders/viewport_mesh.frag
 )
 
 target_include_directories(mobile3d_studio PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/qt)

@@ -31,9 +31,7 @@ int main(int argc, char* argv[]) {
 #endif
 
 #if defined(Q_OS_ANDROID)
-    if (!smokeTest) {
-        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
-    }
+    if (!smokeTest) QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
 #else
     if (!smokeTest && (requestedVulkan || vulkanSmokeTest)) {
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
@@ -44,7 +42,7 @@ int main(int argc, char* argv[]) {
 
     if (vulkanSmokeTest) {
         QString shaderError;
-        if (!VulkanShaderLibrary::validateViewportLineShaders(&shaderError)) {
+        if (!VulkanShaderLibrary::validateViewportShaders(&shaderError)) {
             qCritical().noquote() << shaderError;
             return 5;
         }
@@ -53,9 +51,7 @@ int main(int argc, char* argv[]) {
     EditorController controller;
     if (vulkanSmokeTest) {
         if (!controller.createProject(QStringLiteral("Vulkan Smoke Test")) ||
-            !controller.addObject(QStringLiteral("Mesh"))) {
-            return 3;
-        }
+            !controller.addObject(QStringLiteral("Mesh"))) return 3;
     }
 
     QObject::connect(&app, &QGuiApplication::applicationStateChanged,
@@ -69,13 +65,8 @@ int main(int argc, char* argv[]) {
     initialProperties.insert(QStringLiteral("controller"), QVariant::fromValue(&controller));
     engine.setInitialProperties(initialProperties);
     engine.loadFromModule(QStringLiteral("Mobile3D"), QStringLiteral("Main"));
-    if (engine.rootObjects().isEmpty()) {
-        return -1;
-    }
-
-    if (smokeTest) {
-        return 0;
-    }
+    if (engine.rootObjects().isEmpty()) return -1;
+    if (smokeTest) return 0;
 
     if (vulkanSmokeTest) {
         QObject* root = engine.rootObjects().constFirst();
@@ -83,7 +74,8 @@ int main(int argc, char* argv[]) {
             auto* viewport = root ? root->findChild<VulkanViewport*>(QStringLiteral("nativeVulkanViewport"))
                                   : nullptr;
             const bool passed = viewport && viewport->vulkanActive() &&
-                                viewport->recordedFrameCount() > 0;
+                                viewport->recordedFrameCount() > 0 &&
+                                viewport->recordedMeshDrawCount() > 0;
             app.exit(passed ? 0 : 4);
         });
     }

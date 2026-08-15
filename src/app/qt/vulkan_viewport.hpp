@@ -40,11 +40,12 @@ public:
     [[nodiscard]] bool vulkanActive() const noexcept { return vulkanActive_; }
     [[nodiscard]] QString backendName() const { return backendName_; }
     [[nodiscard]] QString projectionName() const;
-    [[nodiscard]] double cameraDistance() const noexcept {
-        return static_cast<double>(camera_.distance());
-    }
+    [[nodiscard]] double cameraDistance() const noexcept { return static_cast<double>(camera_.distance()); }
     [[nodiscard]] std::uint64_t recordedFrameCount() const noexcept {
         return recordedFrameCount_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t recordedMeshDrawCount() const noexcept {
+        return recordedMeshDrawCount_.load(std::memory_order_relaxed);
     }
 
     Q_INVOKABLE void toggleProjection();
@@ -86,6 +87,7 @@ private:
     qsizetype lastTouchPointCount_{0};
     Qt::MouseButton navigationButton_{Qt::NoButton};
     std::atomic_uint64_t recordedFrameCount_{0};
+    std::atomic_uint64_t recordedMeshDrawCount_{0};
     bool vulkanActive_{false};
     QString backendName_{QStringLiteral("Unavailable")};
 };

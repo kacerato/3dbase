@@ -15,79 +15,69 @@ constexpr std::uint32_t kSpirvMagic = 0x07230203U;
                                    QString* error) {
     QFile file(resourcePath);
     if (!file.open(QIODevice::ReadOnly)) {
-        if (error) {
-            *error = QStringLiteral("Could not open embedded shader resource: %1").arg(resourcePath);
-        }
+        if (error) *error = QStringLiteral("Could not open embedded shader resource: %1").arg(resourcePath);
         return {};
     }
 
     const QShader shader = QShader::fromSerialized(file.readAll());
     if (!shader.isValid()) {
-        if (error) {
-            *error = QStringLiteral("Embedded qsb shader is invalid: %1").arg(resourcePath);
-        }
+        if (error) *error = QStringLiteral("Embedded qsb shader is invalid: %1").arg(resourcePath);
         return {};
     }
     if (shader.stage() != expectedStage) {
-        if (error) {
-            *error = QStringLiteral("Embedded shader stage mismatch: %1").arg(resourcePath);
-        }
+        if (error) *error = QStringLiteral("Embedded shader stage mismatch: %1").arg(resourcePath);
         return {};
     }
 
     for (const auto& key : shader.availableShaders()) {
-        if (key.source() != QShader::SpirvShader ||
-            key.sourceVariant() != QShader::StandardShader) {
-            continue;
-        }
-
+        if (key.source() != QShader::SpirvShader || key.sourceVariant() != QShader::StandardShader) continue;
         const QByteArray code = shader.shader(key).shader();
         if (code.size() < static_cast<qsizetype>(sizeof(std::uint32_t)) ||
-            code.size() % static_cast<qsizetype>(sizeof(std::uint32_t)) != 0) {
-            continue;
-        }
-
+            code.size() % static_cast<qsizetype>(sizeof(std::uint32_t)) != 0) continue;
         std::uint32_t magic = 0;
         std::memcpy(&magic, code.constData(), sizeof(magic));
-        if (magic == kSpirvMagic) {
-            return code;
-        }
+        if (magic == kSpirvMagic) return code;
     }
 
-    if (error) {
-        *error = QStringLiteral("No valid SPIR-V payload found in: %1").arg(resourcePath);
-    }
+    if (error) *error = QStringLiteral("No valid SPIR-V payload found in: %1").arg(resourcePath);
     return {};
+}
+
+bool validatePair(const QByteArray& vertex, const QByteArray& fragment,
+                  const QString& localError, QString* error) {
+    if (vertex.isEmpty() || fragment.isEmpty()) {
+        if (error) *error = localError;
+        return false;
+    }
+    return true;
 }
 
 } // namespace
 
 QByteArray VulkanShaderLibrary::viewportLineVertexSpirv(QString* error) {
-    return loadSpirv(QStringLiteral(":/shaders/viewport_line.vert.qsb"),
-                     QShader::VertexStage, error);
+    return loadSpirv(QStringLiteral(":/shaders/viewport_line.vert.qsb"), QShader::VertexStage, error);
 }
 
 QByteArray VulkanShaderLibrary::viewportLineFragmentSpirv(QString* error) {
-    return loadSpirv(QStringLiteral(":/shaders/viewport_line.frag.qsb"),
-                     QShader::FragmentStage, error);
+    return loadSpirv(QStringLiteral(":/shaders/viewport_line.frag.qsb"), QShader::FragmentStage, error);
 }
 
-bool VulkanShaderLibrary::validateViewportLineShaders(QString* error) {
+QByteArray VulkanShaderLibrary::viewportMeshVertexSpirv(QString* error) {
+    return loadSpirv(QStringLiteral(":/shaders/viewport_mesh.vert.qsb"), QShader::VertexStage, error);
+}
+
+QByteArray VulkanShaderLibrary::viewportMeshFragmentSpirv(QString* error) {
+    return loadSpirv(QStringLiteral(":/shaders/viewport_mesh.frag.qsb"), QShader::FragmentStage, error);
+}
+
+bool VulkanShaderLibrary::validateViewportShaders(QString* error) {
     QString localError;
-    if (viewportLineVertexSpirv(&localError).isEmpty()) {
-        if (error) {
-            *error = localError;
-        }
-        return false;
-    }
-    if (viewportLineFragmentSpirv(&localError).isEmpty()) {
-        if (error) {
-            *error = localError;
-        }
-        return false;
-    }
-    if (error) {
-        error->clear();
-    }
+    const auto lineVertex = viewportLineVertexSpirv(&localError);
+    const auto lineFragment = viewportLineFragmentSpirv(&localError);
+    if (!validatePair(lineVertex, lineFragment, localError, error)) return false;
+    const auto meshVertex = viewportMeshVertexSpirv(&localError);
+    const auto meshFragment = viewportMeshFragmentSpirv(&localError);
+    if (!validatePair(meshVertex, meshFragment, localError, error)) return false;
+    if (error) error->clear();
     return true;
 }

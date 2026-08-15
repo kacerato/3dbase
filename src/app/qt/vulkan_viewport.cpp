@@ -1,6 +1,7 @@
 #include "vulkan_viewport.hpp"
 
 #include "editor_controller.hpp"
+#include "vulkan_viewport_renderer.hpp"
 
 #include <QEvent>
 #include <QMouseEvent>
@@ -9,13 +10,10 @@
 #include <QRectF>
 #include <QSGRendererInterface>
 #include <QTouchEvent>
-#include <QVulkanDeviceFunctions>
-#include <QVulkanInstance>
 #include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
-#include <cstdint>
 #include <utility>
 
 namespace {
@@ -40,115 +38,21 @@ QString graphicsApiName(QSGRendererInterface::GraphicsApi api) {
 }
 
 [[nodiscard]] QPointF touchCentroid(const QList<QEventPoint>& points) {
-    if (points.isEmpty()) {
-        return {};
-    }
+    if (points.isEmpty()) return {};
     QPointF sum;
-    for (const auto& point : points) {
-        sum += point.position();
-    }
+    for (const auto& point : points) sum += point.position();
     return sum / static_cast<qreal>(points.size());
 }
 
 [[nodiscard]] float touchSpan(const QList<QEventPoint>& points) {
-    if (points.size() < 2) {
-        return 0.0F;
-    }
+    if (points.size() < 2) return 0.0F;
     const QPointF delta = points.at(1).position() - points.at(0).position();
     return std::hypot(static_cast<float>(delta.x()), static_cast<float>(delta.y()));
 }
 
 } // namespace
 
-class VulkanViewportRenderer final {
-public:
-    void synchronize(QRect viewportPixels, m3d::RenderSceneSnapshot snapshot,
-                     m3d::Mat4 viewProjection) {
-        viewportPixels_ = viewportPixels;
-        snapshot_ = std::move(snapshot);
-        viewProjection_ = viewProjection;
-    }
-
-    [[nodiscard]] bool record(QQuickWindow* window) {
-        if (!window || viewportPixels_.isEmpty()) {
-            return false;
-        }
-
-        auto* rendererInterface = window->rendererInterface();
-        if (!rendererInterface || rendererInterface->graphicsApi() != QSGRendererInterface::Vulkan) {
-            return false;
-        }
-
-        auto* instance = static_cast<QVulkanInstance*>(rendererInterface->getResource(
-            window, QSGRendererInterface::VulkanInstanceResource));
-        auto* deviceHandle = static_cast<VkDevice*>(rendererInterface->getResource(
-            window, QSGRendererInterface::DeviceResource));
-        if (!instance || !deviceHandle || !*deviceHandle) {
-            return false;
-        }
-
-        auto* deviceFunctions = instance->deviceFunctions(*deviceHandle);
-        if (!deviceFunctions) {
-            return false;
-        }
-
-        const qreal dpr = window->devicePixelRatio();
-        const QSize framebufferSize{
-            static_cast<int>(std::ceil(static_cast<double>(window->width()) * dpr)),
-            static_cast<int>(std::ceil(static_cast<double>(window->height()) * dpr))
-        };
-        const QRect framebufferRect(QPoint(0, 0), framebufferSize);
-        const QRect clearArea = viewportPixels_.intersected(framebufferRect);
-        if (clearArea.isEmpty()) {
-            return false;
-        }
-
-        const bool hasSelection = std::any_of(snapshot_.objects().cbegin(), snapshot_.objects().cend(),
-                                              [](const m3d::RenderObjectSnapshot& object) {
-                                                  return object.selected;
-                                              });
-        const float objectLift = std::min(static_cast<float>(snapshot_.size()) * 0.003F, 0.035F);
-        const float cameraLift = std::min(std::abs(viewProjection_.at(0, 0)) * 0.002F, 0.015F);
-
-        VkClearAttachment clearAttachment{};
-        clearAttachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        clearAttachment.colorAttachment = 0;
-        clearAttachment.clearValue.color.float32[0] = 0.018F + cameraLift;
-        clearAttachment.clearValue.color.float32[1] = 0.026F + objectLift;
-        clearAttachment.clearValue.color.float32[2] = (hasSelection ? 0.105F : 0.058F) + objectLift;
-        clearAttachment.clearValue.color.float32[3] = 1.0F;
-
-        VkClearRect clearRect{};
-        clearRect.rect.offset.x = clearArea.x();
-        clearRect.rect.offset.y = clearArea.y();
-        clearRect.rect.extent.width = static_cast<std::uint32_t>(clearArea.width());
-        clearRect.rect.extent.height = static_cast<std::uint32_t>(clearArea.height());
-        clearRect.baseArrayLayer = 0;
-        clearRect.layerCount = 1;
-
-        // Qt 6 may provide a dedicated secondary command buffer for external
-        // commands, so CommandListResource must be queried after this call.
-        window->beginExternalCommands();
-        auto* commandBufferHandle = static_cast<VkCommandBuffer*>(rendererInterface->getResource(
-            window, QSGRendererInterface::CommandListResource));
-        if (!commandBufferHandle || !*commandBufferHandle) {
-            window->endExternalCommands();
-            return false;
-        }
-
-        deviceFunctions->vkCmdClearAttachments(*commandBufferHandle, 1, &clearAttachment, 1, &clearRect);
-        window->endExternalCommands();
-        return true;
-    }
-
-private:
-    QRect viewportPixels_;
-    m3d::RenderSceneSnapshot snapshot_;
-    m3d::Mat4 viewProjection_{};
-};
-
-VulkanViewport::VulkanViewport(QQuickItem* parent)
-    : QQuickItem(parent) {
+VulkanViewport::VulkanViewport(QQuickItem* parent) : QQuickItem(parent) {
     setFlag(ItemHasContents, false);
     setAcceptTouchEvents(true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton | Qt::RightButton);
@@ -156,29 +60,17 @@ VulkanViewport::VulkanViewport(QQuickItem* parent)
 }
 
 VulkanViewport::~VulkanViewport() {
-    if (connectedWindow_) {
-        disconnect(connectedWindow_, nullptr, this, nullptr);
-    }
+    if (connectedWindow_) disconnect(connectedWindow_, nullptr, this, nullptr);
     delete renderer_;
 }
 
-QObject* VulkanViewport::controller() const noexcept {
-    return controller_.data();
-}
+QObject* VulkanViewport::controller() const noexcept { return controller_.data(); }
 
 void VulkanViewport::setController(QObject* controller) {
     auto* typedController = qobject_cast<EditorController*>(controller);
-    if (controller_.data() == typedController) {
-        return;
-    }
-
-    if (controllerProjectConnection_) {
-        disconnect(controllerProjectConnection_);
-    }
-    if (controllerSelectionConnection_) {
-        disconnect(controllerSelectionConnection_);
-    }
-
+    if (controller_.data() == typedController) return;
+    if (controllerProjectConnection_) disconnect(controllerProjectConnection_);
+    if (controllerSelectionConnection_) disconnect(controllerSelectionConnection_);
     controller_ = typedController;
     if (controller_) {
         controllerProjectConnection_ = connect(controller_, &EditorController::projectStateChanged,
@@ -186,15 +78,13 @@ void VulkanViewport::setController(QObject* controller) {
         controllerSelectionConnection_ = connect(controller_, &EditorController::selectionChanged,
                                                  this, &QQuickItem::update);
     }
-
     emit controllerChanged();
     update();
 }
 
 QString VulkanViewport::projectionName() const {
     return camera_.projection() == m3d::CameraProjection::Perspective
-        ? QStringLiteral("Perspective")
-        : QStringLiteral("Orthographic");
+        ? QStringLiteral("Perspective") : QStringLiteral("Orthographic");
 }
 
 void VulkanViewport::toggleProjection() {
@@ -210,8 +100,7 @@ void VulkanViewport::resetCamera() {
 }
 
 void VulkanViewport::releaseResources() {
-    // GPU/device-owned state is released from sceneGraphInvalidated() on the render
-    // thread. This hook intentionally does not introduce GUI-thread Vulkan access.
+    // Device-owned state is released from sceneGraphInvalidated on the render thread.
 }
 
 void VulkanViewport::mousePressEvent(QMouseEvent* event) {
@@ -225,14 +114,9 @@ void VulkanViewport::mouseMoveEvent(QMouseEvent* event) {
         event->ignore();
         return;
     }
-
     const QPointF delta = event->position() - lastMousePosition_;
     lastMousePosition_ = event->position();
-    if (navigationButton_ == Qt::LeftButton) {
-        orbitByPixels(delta);
-    } else {
-        panByPixels(delta);
-    }
+    if (navigationButton_ == Qt::LeftButton) orbitByPixels(delta); else panByPixels(delta);
     event->accept();
 }
 
@@ -247,8 +131,7 @@ void VulkanViewport::wheelEvent(QWheelEvent* event) {
         event->ignore();
         return;
     }
-    const float factor = std::exp(static_cast<float>(wheelUnits) * kWheelZoomExponentPerUnit);
-    camera_.zoom(factor);
+    camera_.zoom(std::exp(static_cast<float>(wheelUnits) * kWheelZoomExponentPerUnit));
     cameraMutated();
     event->accept();
 }
@@ -256,7 +139,6 @@ void VulkanViewport::wheelEvent(QWheelEvent* event) {
 void VulkanViewport::touchEvent(QTouchEvent* event) {
     const auto points = event->points();
     const qsizetype pointCount = points.size();
-
     if (event->type() == QEvent::TouchEnd || event->type() == QEvent::TouchCancel || pointCount == 0) {
         lastTouchPointCount_ = 0;
         lastTouchSpan_ = 0.0F;
@@ -264,7 +146,6 @@ void VulkanViewport::touchEvent(QTouchEvent* event) {
         event->accept();
         return;
     }
-
     const QPointF centroid = touchCentroid(points);
     const float span = touchSpan(points);
     if (event->type() == QEvent::TouchBegin || pointCount != lastTouchPointCount_) {
@@ -274,7 +155,6 @@ void VulkanViewport::touchEvent(QTouchEvent* event) {
         event->accept();
         return;
     }
-
     if (pointCount == 1) {
         orbitByPixels(centroid - lastTouchCentroid_);
     } else {
@@ -284,7 +164,6 @@ void VulkanViewport::touchEvent(QTouchEvent* event) {
             cameraMutated();
         }
     }
-
     lastTouchCentroid_ = centroid;
     lastTouchSpan_ = span;
     lastTouchPointCount_ = pointCount;
@@ -292,11 +171,8 @@ void VulkanViewport::touchEvent(QTouchEvent* event) {
 }
 
 void VulkanViewport::handleWindowChanged(QQuickWindow* window) {
-    if (connectedWindow_) {
-        disconnect(connectedWindow_, nullptr, this, nullptr);
-    }
+    if (connectedWindow_) disconnect(connectedWindow_, nullptr, this, nullptr);
     connectedWindow_ = window;
-
     if (!window) {
         if (vulkanActive_ || backendName_ != QStringLiteral("Unavailable")) {
             vulkanActive_ = false;
@@ -305,27 +181,20 @@ void VulkanViewport::handleWindowChanged(QQuickWindow* window) {
         }
         return;
     }
-
     connect(window, &QQuickWindow::beforeSynchronizing,
             this, &VulkanViewport::sync, Qt::DirectConnection);
     connect(window, &QQuickWindow::beforeRenderPassRecording,
             this, &VulkanViewport::recordVulkanCommands, Qt::DirectConnection);
     connect(window, &QQuickWindow::sceneGraphInvalidated,
             this, &VulkanViewport::cleanup, Qt::DirectConnection);
-
     updateBackendState(window);
     update();
 }
 
 void VulkanViewport::sync() {
     auto* currentWindow = window();
-    if (!currentWindow) {
-        return;
-    }
-    if (!renderer_) {
-        renderer_ = new VulkanViewportRenderer;
-    }
-
+    if (!currentWindow) return;
+    if (!renderer_) renderer_ = new VulkanViewportRenderer;
     const QRectF sceneRect = mapRectToScene(boundingRect());
     const qreal dpr = currentWindow->devicePixelRatio();
     const int left = static_cast<int>(std::floor(static_cast<double>(sceneRect.left()) * dpr));
@@ -334,38 +203,33 @@ void VulkanViewport::sync() {
     const int bottom = static_cast<int>(std::ceil(static_cast<double>(sceneRect.bottom()) * dpr));
     const int pixelWidth = std::max(0, right - left);
     const int pixelHeight = std::max(0, bottom - top);
-    const QRect viewportPixels(left, top, pixelWidth, pixelHeight);
-
     m3d::RenderSceneSnapshot snapshot;
-    if (controller_) {
-        snapshot = controller_->renderSnapshot();
-    }
+    if (controller_) snapshot = controller_->renderSnapshot();
     const float aspect = pixelHeight > 0
-        ? static_cast<float>(pixelWidth) / static_cast<float>(pixelHeight)
-        : 1.0F;
-    renderer_->synchronize(viewportPixels, std::move(snapshot), camera_.viewProjectionMatrix(aspect));
+        ? static_cast<float>(pixelWidth) / static_cast<float>(pixelHeight) : 1.0F;
+    renderer_->synchronize(QRect(left, top, pixelWidth, pixelHeight), std::move(snapshot),
+                           camera_.viewProjectionMatrix(aspect));
 }
 
 void VulkanViewport::cleanup() {
+    if (renderer_) renderer_->release();
     delete renderer_;
     renderer_ = nullptr;
 }
 
 void VulkanViewport::recordVulkanCommands() {
-    if (renderer_ && renderer_->record(window())) {
-        recordedFrameCount_.fetch_add(1, std::memory_order_relaxed);
-    }
+    if (!renderer_) return;
+    const auto stats = renderer_->record(window());
+    if (stats.recorded) recordedFrameCount_.fetch_add(1, std::memory_order_relaxed);
+    if (stats.meshDraws > 0) recordedMeshDrawCount_.fetch_add(stats.meshDraws, std::memory_order_relaxed);
 }
 
 void VulkanViewport::updateBackendState(QQuickWindow* window) {
     const auto api = window && window->rendererInterface()
-        ? window->rendererInterface()->graphicsApi()
-        : QSGRendererInterface::Unknown;
+        ? window->rendererInterface()->graphicsApi() : QSGRendererInterface::Unknown;
     const bool isVulkan = api == QSGRendererInterface::Vulkan;
     const QString name = graphicsApiName(api);
-    if (vulkanActive_ == isVulkan && backendName_ == name) {
-        return;
-    }
+    if (vulkanActive_ == isVulkan && backendName_ == name) return;
     vulkanActive_ = isVulkan;
     backendName_ = name;
     emit backendChanged();
@@ -390,8 +254,7 @@ float VulkanViewport::worldUnitsPerPixel() const noexcept {
         return camera_.orthographicHeight() / viewportHeight;
     }
     const float fovRadians = camera_.perspectiveFovDegrees() * kDegreesToRadians;
-    const float visibleHeight = 2.0F * camera_.distance() * std::tan(fovRadians * 0.5F);
-    return visibleHeight / viewportHeight;
+    return 2.0F * camera_.distance() * std::tan(fovRadians * 0.5F) / viewportHeight;
 }
 
 void VulkanViewport::cameraMutated() {
