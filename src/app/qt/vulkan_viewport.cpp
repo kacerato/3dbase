@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <utility>
 
 namespace {
@@ -29,6 +30,8 @@ QString graphicsApiName(QSGRendererInterface::GraphicsApi api) {
     }
     return QStringLiteral("Unknown");
 }
+
+} // namespace
 
 class VulkanViewportRenderer final {
 public:
@@ -98,14 +101,10 @@ public:
         deviceFunctions->vkCmdClearAttachments(*commandBufferHandle, 1, &clearAttachment, 1, &clearRect);
     }
 
-    [[nodiscard]] std::size_t snapshotObjectCount() const noexcept { return snapshot_.size(); }
-
 private:
     QRect viewportPixels_;
     m3d::RenderSceneSnapshot snapshot_;
 };
-
-} // namespace
 
 VulkanViewport::VulkanViewport(QQuickItem* parent)
     : QQuickItem(parent) {
@@ -195,7 +194,9 @@ void VulkanViewport::sync() {
     const int top = static_cast<int>(std::floor(static_cast<double>(sceneRect.top()) * dpr));
     const int right = static_cast<int>(std::ceil(static_cast<double>(sceneRect.right()) * dpr));
     const int bottom = static_cast<int>(std::ceil(static_cast<double>(sceneRect.bottom()) * dpr));
-    const QRect viewportPixels(QPoint(left, top), QPoint(right, bottom));
+    const int pixelWidth = std::max(0, right - left);
+    const int pixelHeight = std::max(0, bottom - top);
+    const QRect viewportPixels(left, top, pixelWidth, pixelHeight);
 
     m3d::RenderSceneSnapshot snapshot;
     if (controller_) {
