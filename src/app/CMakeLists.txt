@@ -15,6 +15,8 @@ qt_add_executable(mobile3d_studio
 qt_add_qml_module(mobile3d_studio
     URI Mobile3D
     VERSION 1.0
+    DEPENDENCIES
+        QtQuick
     QML_FILES
         qml/Main.qml
         qml/TopBar.qml
