@@ -15,6 +15,7 @@ include(Mobile3DCompilerOptions)
 
 add_subdirectory(src/core)
 add_subdirectory(src/editor)
+add_subdirectory(src/render)
 
 if(MOBILE3D_BUILD_QT_APP)
     add_subdirectory(src/app)
