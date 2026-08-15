@@ -19,8 +19,10 @@ int main(int argc, char* argv[]) {
     const auto arguments = QCoreApplication::arguments();
     const bool smokeTest = std::find(arguments.cbegin(), arguments.cend(),
                                      QStringLiteral("--smoke-test")) != arguments.cend();
+#if !defined(Q_OS_ANDROID)
     const bool requestedVulkan = std::find(arguments.cbegin(), arguments.cend(),
                                            QStringLiteral("--vulkan")) != arguments.cend();
+#endif
 
 #if defined(Q_OS_ANDROID)
     if (!smokeTest) {
