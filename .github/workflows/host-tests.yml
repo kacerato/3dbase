@@ -74,15 +74,15 @@ jobs:
             "platforms;android-36" \
             "build-tools;36.0.0" \
             "ndk;${MOBILE3D_NDK_VERSION}"
-      - name: Install Qt 6.8 for Android arm64-v8a
+      - name: Install Qt 6.8.3 for Android arm64-v8a
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.*'
+          version: '6.8.3'
           host: linux
           target: android
           arch: android_arm64_v8a
           cache: true
-          cache-key-prefix: install-qt-action-android-arm64
+          cache-key-prefix: install-qt-action-android-arm64-6.8.3
       - name: Verify Qt Android environment
         shell: bash
         run: |
