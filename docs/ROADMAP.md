@@ -4,7 +4,7 @@ This roadmap is the implementation contract for the repository. Stages are inten
 
 ## Stage 0 — Project and document foundation
 
-**Status: implemented in the first foundation commit.**
+**Status: complete.**
 
 - [x] CMake C++20 project with strict warnings.
 - [x] Platform-independent `mobile3d_core` library.
@@ -20,7 +20,7 @@ Exit criterion: a project can be created, saved, closed, reopened and recovered 
 
 ## Stage 1 — Scene and editor command foundation
 
-**Status: implemented in the first foundation commit.**
+**Status: complete.**
 
 - [x] Object types and local transform.
 - [x] Parent/child hierarchy.
@@ -38,11 +38,14 @@ Exit criterion: all basic scene edits can be represented as deterministic comman
 
 ## Stage 2 — Native mobile editor shell (Qt Quick/QML)
 
-**Status: implementation in progress. Core/editor integration is host-tested; Qt/Android build validation is still pending.**
+**Status: implemented and validated for the current no-APK milestone. Physical-device validation remains intentionally deferred.**
 
-- [ ] Qt 6 application target compiled and runtime-validated from C++/QML. The target/source now exists but has not yet been compiled in an environment with Qt 6.8+.
-- [ ] Android Qt/NDK configuration compiled for arm64-v8a without project-owned Kotlin application code.
-- [x] Landscape/portrait responsive editor frame source.
+- [x] Qt 6.8 application target compiled from C++/QML with strict warnings.
+- [x] Host runtime QML smoke test.
+- [x] `qmllint` validation with zero warnings.
+- [x] Android Qt/NDK arm64-v8a cross-build with Qt 6.8.3 + NDK r27c.
+- [x] No project-owned Kotlin/Java application layer.
+- [x] Landscape/portrait responsive editor frame.
 - [x] Workspace manager backed by editor state.
 - [x] Outliner backed by the real Scene document.
 - [x] Inspector backed by active selection and command-based property edits.
@@ -51,28 +54,55 @@ Exit criterion: all basic scene edits can be represented as deterministic comman
 - [x] Autosave scheduler, lifecycle autosave and crash-recovery prompt.
 - [x] Touch-safe panel resizing/collapsing and compact drawers.
 - [x] `EditorSession` boundary prevents QML from mutating Scene directly.
-- [ ] QML load/runtime validation with a real Qt host SDK.
-- [ ] Android lifecycle/on-device validation.
+- [ ] Physical Android lifecycle/on-device validation. Deferred until the project reaches the agreed APK milestone.
 
-Exit criterion: a user can create a project and manipulate scene hierarchy/properties on-device even before 3D rendering is connected.
+The editor shell is no longer considered source-only: CI compiles it, loads QML at runtime and cross-builds the native Android arm64 target. The remaining physical-device item specifically requires an installable package and is therefore deferred by project policy rather than treated as an architectural blocker.
 
 ## Stage 3 — Vulkan viewport foundation
 
-- [ ] Vulkan instance/device/surface lifecycle.
-- [ ] Android surface integration through Qt/NDK boundary.
-- [ ] Swapchain recreation and suspend/resume handling.
-- [ ] GPU memory allocator abstraction.
-- [ ] Command pools/buffers and frame synchronization.
-- [ ] Pipeline cache.
-- [ ] Depth buffer and MSAA policy.
-- [ ] Basic unlit mesh rendering.
-- [ ] Grid and XYZ axes.
-- [ ] Perspective and orthographic camera.
-- [ ] Touch orbit/pan/zoom.
+**Status: in progress. The native Vulkan path, render-data boundary and camera/navigation foundation are implemented and CI-validated; actual scene geometry rendering is next.**
+
+- [x] Immutable `RenderSceneSnapshot` boundary; renderer never receives live `Scene`/selection pointers.
+- [x] Android requests Vulkan before the first `QQuickWindow` is created.
+- [x] Reuse of Qt Quick's Vulkan instance/device/surface/render-pass lifecycle rather than creating a conflicting second surface.
+- [x] Native Vulkan commands recorded inside the Qt Quick render pass.
+- [x] Native command state isolated with `beginExternalCommands()` / `endExternalCommands()`.
+- [x] Viewport-native command recording clipped to the viewport rectangle.
+- [x] Real Vulkan runtime smoke test using software Vulkan/Lavapipe; success requires at least one native Vulkan command-recorded frame.
+- [x] Android arm64 cross-build of the Vulkan viewport path.
+- [x] Scene-graph invalidation cleanup boundary for renderer-owned resources.
+- [x] Perspective viewport camera.
+- [x] Orthographic viewport camera.
+- [x] Vulkan-compatible projection matrices (0..1 depth range and inverted framebuffer Y convention).
+- [x] Orbit camera.
+- [x] Pan camera.
+- [x] Zoom camera.
+- [x] One-finger orbit input.
+- [x] Two-finger pan + pinch zoom input.
+- [x] Host mouse/wheel navigation.
+- [x] Perspective/Orthographic toggle and Reset View controls.
+- [ ] Physical Android Vulkan lifecycle/suspend-resume validation. Deferred with APK/device testing.
+- [ ] Dedicated GPU upload/memory allocator abstraction for authored geometry.
+- [ ] Vulkan pipeline cache persisted across sessions/devices where valid.
+- [ ] Depth buffer policy for custom 3D drawing.
+- [ ] MSAA policy and device quality fallback.
+- [ ] Grid.
+- [ ] XYZ axes.
+- [ ] Basic unlit authored mesh rendering.
 - [ ] Object ID picking.
 - [ ] Selection outline.
 
-Exit criterion: the real scene is visible/selectable in a stable Vulkan viewport across Android lifecycle changes.
+The next Stage 3 implementation order is intentionally:
+
+1. shader/pipeline resource module;
+2. grid + XYZ axes;
+3. geometry upload boundary and unlit mesh path;
+4. depth/MSAA policy;
+5. ID picking;
+6. selection outline;
+7. Android physical lifecycle validation when APK testing is allowed.
+
+Exit criterion: the real authored scene is visible/selectable in a stable Vulkan viewport across Android lifecycle changes.
 
 ## Stage 4 — Transform and scene editing vertical slice
 
@@ -249,4 +279,4 @@ Only after the 3D authoring stack is mature:
 
 ## APK policy for this repository
 
-An APK is not a milestone by itself. Packaging should happen when there is a coherent on-device vertical slice to test. Until then, host builds/tests validate the platform-independent foundation and Android work is kept modular.
+An APK is not a milestone by itself. Packaging should happen when there is a coherent on-device vertical slice to test. Until then, host builds/tests validate the platform-independent foundation, Qt/QML runtime smoke tests validate the editor shell, Vulkan/Lavapipe smoke tests validate native command recording, and Android arm64 cross-builds validate the native target without producing an APK.
