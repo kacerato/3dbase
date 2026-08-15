@@ -245,7 +245,7 @@ void VulkanViewport::wheelEvent(QWheelEvent* event) {
 
 void VulkanViewport::touchEvent(QTouchEvent* event) {
     const auto points = event->points();
-    const int pointCount = points.size();
+    const qsizetype pointCount = points.size();
 
     if (event->type() == QEvent::TouchEnd || event->type() == QEvent::TouchCancel || pointCount == 0) {
         lastTouchPointCount_ = 0;
