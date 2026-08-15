@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <bit>
 #include <functional>
+#include <limits>
 #include <unordered_map>
 #include <utility>
 
@@ -49,6 +50,15 @@ RenderSceneSnapshot::RenderSceneSnapshot(std::uint64_t sceneRevision,
 const RenderObjectSnapshot* RenderSceneSnapshot::find(ObjectId id) const noexcept {
     const auto found = std::find_if(objects_.cbegin(), objects_.cend(),
                                     [id](const RenderObjectSnapshot& object) { return object.id == id; });
+    return found == objects_.cend() ? nullptr : &*found;
+}
+
+const RenderObjectSnapshot* RenderSceneSnapshot::findPickId(PickId pickId) const noexcept {
+    if (pickId == backgroundPickId) return nullptr;
+    const auto found = std::find_if(objects_.cbegin(), objects_.cend(),
+                                    [pickId](const RenderObjectSnapshot& object) {
+                                        return object.pickId == pickId;
+                                    });
     return found == objects_.cend() ? nullptr : &*found;
 }
 
@@ -102,9 +112,14 @@ RenderSceneSnapshot RenderSnapshotBuilder::build(const Scene& scene,
     const auto active = selection.active();
     std::vector<RenderObjectSnapshot> snapshots;
     snapshots.reserve(authoredObjects.size());
+    std::uint64_t nextPickId = 1;
     for (const auto& object : authoredObjects) {
+        const PickId pickId = nextPickId <= std::numeric_limits<PickId>::max()
+            ? static_cast<PickId>(nextPickId++)
+            : backgroundPickId;
         snapshots.push_back(RenderObjectSnapshot{
             .id = object.id,
+            .pickId = pickId,
             .type = object.type,
             .localTransform = object.localTransform,
             .worldTransform = resolveWorld(object.id),

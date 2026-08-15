@@ -10,6 +10,9 @@
 
 namespace m3d {
 
+using PickId = std::uint32_t;
+inline constexpr PickId backgroundPickId = 0;
+
 struct RenderMeshSnapshot final {
     ResourceId id{};
     std::vector<MeshVertex> vertices;
@@ -20,6 +23,7 @@ struct RenderMeshSnapshot final {
 
 struct RenderObjectSnapshot final {
     ObjectId id{};
+    PickId pickId{backgroundPickId};
     ObjectType type{ObjectType::Empty};
     Transform localTransform{};
     Mat4 worldTransform{Mat4::identity()};
@@ -43,6 +47,7 @@ public:
     [[nodiscard]] const std::vector<RenderObjectSnapshot>& objects() const noexcept { return objects_; }
     [[nodiscard]] const std::vector<RenderMeshSnapshot>& meshes() const noexcept { return meshes_; }
     [[nodiscard]] const RenderObjectSnapshot* find(ObjectId id) const noexcept;
+    [[nodiscard]] const RenderObjectSnapshot* findPickId(PickId pickId) const noexcept;
     [[nodiscard]] const RenderMeshSnapshot* findMesh(ResourceId id) const noexcept;
     [[nodiscard]] std::size_t size() const noexcept { return objects_.size(); }
     [[nodiscard]] bool empty() const noexcept { return objects_.empty(); }

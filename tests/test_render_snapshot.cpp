@@ -28,6 +28,8 @@ TEST_CASE("render snapshot is an immutable deterministic copy of scene presentat
 
     const auto* meshSnapshot = snapshot.find(mesh);
     REQUIRE(meshSnapshot != nullptr);
+    REQUIRE(meshSnapshot->pickId != m3d::backgroundPickId);
+    REQUIRE(snapshot.findPickId(meshSnapshot->pickId) == meshSnapshot);
     REQUIRE(meshSnapshot->type == m3d::ObjectType::Mesh);
     REQUIRE(meshSnapshot->parent == parent);
     REQUIRE(meshSnapshot->meshResource == resource);
@@ -38,6 +40,7 @@ TEST_CASE("render snapshot is an immutable deterministic copy of scene presentat
     REQUIRE(meshSnapshot->visible);
     REQUIRE(meshSnapshot->selected);
     REQUIRE(meshSnapshot->active);
+    REQUIRE(snapshot.findPickId(m3d::backgroundPickId) == nullptr);
 
     const auto* geometry = snapshot.findMesh(resource);
     REQUIRE(geometry != nullptr);
@@ -67,6 +70,7 @@ TEST_CASE("render snapshot is an immutable deterministic copy of scene presentat
 
     const auto changedSnapshot = m3d::RenderSnapshotBuilder::build(scene, selection, 18, 10);
     REQUIRE(changedSnapshot.findMesh(resource)->contentHash != originalHash);
+    REQUIRE(changedSnapshot.find(mesh)->pickId == meshSnapshot->pickId);
 }
 
 TEST_CASE("render snapshot retains hidden objects and their explicit visibility state") {
@@ -79,12 +83,13 @@ TEST_CASE("render snapshot retains hidden objects and their explicit visibility 
     const auto snapshot = m3d::RenderSnapshotBuilder::build(scene, selection, 1, 1);
     const auto* hiddenSnapshot = snapshot.find(hidden);
     REQUIRE(hiddenSnapshot != nullptr);
+    REQUIRE(hiddenSnapshot->pickId != m3d::backgroundPickId);
     REQUIRE(!hiddenSnapshot->visible);
     REQUIRE(!hiddenSnapshot->selected);
     REQUIRE(!hiddenSnapshot->active);
 }
 
-TEST_CASE("render snapshot ordering does not inherit unordered scene storage order") {
+TEST_CASE("render snapshot ordering and pick ids do not inherit unordered scene storage order") {
     m3d::Scene scene;
     m3d::SelectionModel selection;
     const m3d::ObjectId highId(9, 1);
@@ -103,4 +108,8 @@ TEST_CASE("render snapshot ordering does not inherit unordered scene storage ord
     REQUIRE(snapshot.size() == 2);
     REQUIRE(snapshot.objects().at(0).id == lowId);
     REQUIRE(snapshot.objects().at(1).id == highId);
+    REQUIRE(snapshot.objects().at(0).pickId == 1U);
+    REQUIRE(snapshot.objects().at(1).pickId == 2U);
+    REQUIRE(snapshot.findPickId(1U)->id == lowId);
+    REQUIRE(snapshot.findPickId(2U)->id == highId);
 }
