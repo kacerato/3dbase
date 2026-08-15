@@ -10,10 +10,33 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QSurfaceFormat>
 #include <QTimer>
 #include <QVariantMap>
 
 #include <algorithm>
+
+namespace {
+
+int requestedMsaaSamples() {
+    bool ok = false;
+    const int configured = qEnvironmentVariableIntValue("MOBILE3D_MSAA_SAMPLES", &ok);
+    if (!ok) return 4;
+
+    switch (configured) {
+    case 1:
+    case 2:
+    case 4:
+    case 8:
+        return configured;
+    default:
+        qWarning() << "Ignoring unsupported MOBILE3D_MSAA_SAMPLES value" << configured
+                   << "and requesting 4x MSAA instead";
+        return 4;
+    }
+}
+
+} // namespace
 
 int main(int argc, char* argv[]) {
     QGuiApplication app(argc, argv);
@@ -71,6 +94,10 @@ int main(int argc, char* argv[]) {
     auto* rootWindow = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
     if (!rootWindow) return -2;
     if (smokeTest) return 0;
+
+    auto requestedFormat = rootWindow->requestedFormat();
+    requestedFormat.setSamples(requestedMsaaSamples());
+    rootWindow->setFormat(requestedFormat);
 
     auto graphicsConfiguration = rootWindow->graphicsConfiguration();
     graphicsConfiguration.setDepthBufferFor2D(false);

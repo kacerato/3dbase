@@ -8,6 +8,7 @@
 #include <QVulkanDeviceFunctions>
 #include <QVulkanFunctions>
 #include <QVulkanInstance>
+#include <rhi/qrhi.h>
 
 #include <algorithm>
 #include <array>
@@ -28,6 +29,18 @@ template <typename T>
     T value{};
     value.sType = type;
     return value;
+}
+
+[[nodiscard]] VkSampleCountFlagBits vulkanSampleCount(int sampleCount) noexcept {
+    switch (sampleCount) {
+    case 2: return VK_SAMPLE_COUNT_2_BIT;
+    case 4: return VK_SAMPLE_COUNT_4_BIT;
+    case 8: return VK_SAMPLE_COUNT_8_BIT;
+    case 16: return VK_SAMPLE_COUNT_16_BIT;
+    case 32: return VK_SAMPLE_COUNT_32_BIT;
+    case 64: return VK_SAMPLE_COUNT_64_BIT;
+    default: return VK_SAMPLE_COUNT_1_BIT;
+    }
 }
 
 struct LineVertex final {
@@ -93,9 +106,7 @@ struct GpuMesh final {
     functions->vkGetPhysicalDeviceMemoryProperties(physicalDevice, &properties);
     for (std::uint32_t index = 0; index < properties.memoryTypeCount; ++index) {
         const bool supported = (typeBits & (1U << index)) != 0U;
-        if (supported && (properties.memoryTypes[index].propertyFlags & required) == required) {
-            return index;
-        }
+        if (supported && (properties.memoryTypes[index].propertyFlags & required) == required) return index;
     }
     return std::nullopt;
 }
@@ -161,9 +172,7 @@ void destroyBuffer(QVulkanDeviceFunctions* functions, VkDevice device, GpuBuffer
                                                 VkDevice device,
                                                 const QByteArray& bytecode) {
     if (!functions || !device || bytecode.isEmpty() ||
-        bytecode.size() % static_cast<qsizetype>(sizeof(std::uint32_t)) != 0) {
-        return VK_NULL_HANDLE;
-    }
+        bytecode.size() % static_cast<qsizetype>(sizeof(std::uint32_t)) != 0) return VK_NULL_HANDLE;
     std::vector<std::uint32_t> words(static_cast<std::size_t>(bytecode.size()) / sizeof(std::uint32_t));
     std::memcpy(words.data(), bytecode.constData(), static_cast<std::size_t>(bytecode.size()));
     auto info = vkInfo<VkShaderModuleCreateInfo>(VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO);
@@ -191,7 +200,7 @@ struct PipelineCommonState final {
     std::array<VkDynamicState, 2> dynamicStates{};
     VkPipelineDynamicStateCreateInfo dynamic{};
 
-    explicit PipelineCommonState(bool depthEnabled) {
+    PipelineCommonState(bool depthEnabled, VkSampleCountFlagBits sampleCount) {
         viewport = vkInfo<VkPipelineViewportStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO);
         viewport.viewportCount = 1;
         viewport.scissorCount = 1;
@@ -203,7 +212,7 @@ struct PipelineCommonState final {
         raster.lineWidth = 1.0F;
 
         multisample = vkInfo<VkPipelineMultisampleStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO);
-        multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        multisample.rasterizationSamples = sampleCount;
 
         depthStencil = vkInfo<VkPipelineDepthStencilStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO);
         depthStencil.depthTestEnable = depthEnabled ? VK_TRUE : VK_FALSE;
@@ -230,6 +239,7 @@ struct VulkanViewportRenderer::Impl final {
     VkRenderPass renderPass{VK_NULL_HANDLE};
     QVulkanFunctions* functions{nullptr};
     QVulkanDeviceFunctions* deviceFunctions{nullptr};
+    int sampleCount{1};
     GpuBuffer gridBuffer;
     std::uint32_t gridVertexCount{0};
     VkPipelineLayout linePipelineLayout{VK_NULL_HANDLE};
@@ -255,9 +265,7 @@ bool createGridResources(VulkanViewportRenderer::Impl& impl) {
     const auto vertices = makeGridVertices();
     if (!createHostBuffer(impl.functions, impl.deviceFunctions, impl.physicalDevice, impl.device,
                           VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, vertices.data(),
-                          static_cast<VkDeviceSize>(vertices.size() * sizeof(LineVertex)), impl.gridBuffer)) {
-        return false;
-    }
+                          static_cast<VkDeviceSize>(vertices.size() * sizeof(LineVertex)), impl.gridBuffer)) return false;
     impl.gridVertexCount = static_cast<std::uint32_t>(vertices.size());
     return true;
 }
@@ -302,24 +310,17 @@ bool createLinePipeline(VulkanViewportRenderer::Impl& impl) {
     binding.stride = static_cast<std::uint32_t>(sizeof(LineVertex));
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
     std::array<VkVertexInputAttributeDescription, 2> attributes{};
-    attributes[0].location = 0;
-    attributes[0].binding = 0;
-    attributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attributes[0].offset = static_cast<std::uint32_t>(offsetof(LineVertex, x));
-    attributes[1].location = 1;
-    attributes[1].binding = 0;
-    attributes[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
-    attributes[1].offset = static_cast<std::uint32_t>(offsetof(LineVertex, r));
+    attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<std::uint32_t>(offsetof(LineVertex, x))};
+    attributes[1] = {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, static_cast<std::uint32_t>(offsetof(LineVertex, r))};
 
     auto vertexInput = vkInfo<VkPipelineVertexInputStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO);
     vertexInput.vertexBindingDescriptionCount = 1;
     vertexInput.pVertexBindingDescriptions = &binding;
     vertexInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributes.size());
     vertexInput.pVertexAttributeDescriptions = attributes.data();
-
     auto assembly = vkInfo<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);
     assembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-    PipelineCommonState common(false);
+    PipelineCommonState common(false, vulkanSampleCount(impl.sampleCount));
 
     auto pipeline = vkInfo<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
     pipeline.stageCount = static_cast<std::uint32_t>(stages.size());
@@ -335,7 +336,6 @@ bool createLinePipeline(VulkanViewportRenderer::Impl& impl) {
     pipeline.layout = impl.linePipelineLayout;
     pipeline.renderPass = impl.renderPass;
     pipeline.subpass = 0;
-
     const bool success = impl.deviceFunctions->vkCreateGraphicsPipelines(
         impl.device, VK_NULL_HANDLE, 1, &pipeline, nullptr, &impl.linePipeline) == VK_SUCCESS;
     impl.deviceFunctions->vkDestroyShaderModule(impl.device, vertexModule, nullptr);
@@ -387,16 +387,14 @@ bool createMeshPipeline(VulkanViewportRenderer::Impl& impl) {
     attribute.binding = 0;
     attribute.format = VK_FORMAT_R32G32B32_SFLOAT;
     attribute.offset = static_cast<std::uint32_t>(offsetof(m3d::MeshVertex, position));
-
     auto vertexInput = vkInfo<VkPipelineVertexInputStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO);
     vertexInput.vertexBindingDescriptionCount = 1;
     vertexInput.pVertexBindingDescriptions = &binding;
     vertexInput.vertexAttributeDescriptionCount = 1;
     vertexInput.pVertexAttributeDescriptions = &attribute;
-
     auto assembly = vkInfo<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);
     assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    PipelineCommonState common(true);
+    PipelineCommonState common(true, vulkanSampleCount(impl.sampleCount));
 
     auto pipeline = vkInfo<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
     pipeline.stageCount = static_cast<std::uint32_t>(stages.size());
@@ -412,7 +410,6 @@ bool createMeshPipeline(VulkanViewportRenderer::Impl& impl) {
     pipeline.layout = impl.meshPipelineLayout;
     pipeline.renderPass = impl.renderPass;
     pipeline.subpass = 0;
-
     const bool success = impl.deviceFunctions->vkCreateGraphicsPipelines(
         impl.device, VK_NULL_HANDLE, 1, &pipeline, nullptr, &impl.meshPipeline) == VK_SUCCESS;
     impl.deviceFunctions->vkDestroyShaderModule(impl.device, vertexModule, nullptr);
@@ -431,9 +428,7 @@ bool uploadMesh(VulkanViewportRenderer::Impl& impl,
     if (source.vertices.empty() || source.indices.empty()) return false;
     if (!createHostBuffer(impl.functions, impl.deviceFunctions, impl.physicalDevice, impl.device,
                           VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, source.vertices.data(),
-                          static_cast<VkDeviceSize>(source.vertices.size() * sizeof(m3d::MeshVertex)), mesh.vertex)) {
-        return false;
-    }
+                          static_cast<VkDeviceSize>(source.vertices.size() * sizeof(m3d::MeshVertex)), mesh.vertex)) return false;
     if (!createHostBuffer(impl.functions, impl.deviceFunctions, impl.physicalDevice, impl.device,
                           VK_BUFFER_USAGE_INDEX_BUFFER_BIT, source.indices.data(),
                           static_cast<VkDeviceSize>(source.indices.size() * sizeof(std::uint32_t)), mesh.index)) {
@@ -498,24 +493,23 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
     auto* rendererInterface = window->rendererInterface();
     if (!rendererInterface || rendererInterface->graphicsApi() != QSGRendererInterface::Vulkan) return stats;
 
-    auto* instance = static_cast<QVulkanInstance*>(rendererInterface->getResource(
-        window, QSGRendererInterface::VulkanInstanceResource));
-    auto* deviceHandle = static_cast<VkDevice*>(rendererInterface->getResource(
-        window, QSGRendererInterface::DeviceResource));
-    auto* physicalHandle = static_cast<VkPhysicalDevice*>(rendererInterface->getResource(
-        window, QSGRendererInterface::PhysicalDeviceResource));
-    auto* renderPassHandle = static_cast<VkRenderPass*>(rendererInterface->getResource(
-        window, QSGRendererInterface::RenderPassResource));
-    if (!instance || !deviceHandle || !physicalHandle || !renderPassHandle ||
+    auto* instance = static_cast<QVulkanInstance*>(rendererInterface->getResource(window, QSGRendererInterface::VulkanInstanceResource));
+    auto* deviceHandle = static_cast<VkDevice*>(rendererInterface->getResource(window, QSGRendererInterface::DeviceResource));
+    auto* physicalHandle = static_cast<VkPhysicalDevice*>(rendererInterface->getResource(window, QSGRendererInterface::PhysicalDeviceResource));
+    auto* renderPassHandle = static_cast<VkRenderPass*>(rendererInterface->getResource(window, QSGRendererInterface::RenderPassResource));
+    auto* swapchain = static_cast<QRhiSwapChain*>(rendererInterface->getResource(window, QSGRendererInterface::RhiSwapchainResource));
+    if (!instance || !deviceHandle || !physicalHandle || !renderPassHandle || !swapchain ||
         !*deviceHandle || !*physicalHandle || !*renderPassHandle) return stats;
 
     auto* deviceFunctions = instance->deviceFunctions(*deviceHandle);
     auto* functions = instance->functions();
     if (!deviceFunctions || !functions) return stats;
 
+    const int effectiveSampleCount = std::max(1, swapchain->sampleCount());
     auto& impl = *impl_;
     const bool changedDevice = impl.device &&
-        (impl.device != *deviceHandle || impl.renderPass != *renderPassHandle);
+        (impl.device != *deviceHandle || impl.renderPass != *renderPassHandle ||
+         impl.sampleCount != effectiveSampleCount);
     if (changedDevice) release();
     if (!impl.device) {
         impl.device = *deviceHandle;
@@ -523,6 +517,8 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
         impl.renderPass = *renderPassHandle;
         impl.deviceFunctions = deviceFunctions;
         impl.functions = functions;
+        impl.sampleCount = effectiveSampleCount;
+        qInfo() << "Vulkan viewport effective MSAA samples:" << impl.sampleCount;
         if (!createGridResources(impl) || !createLinePipeline(impl) || !createMeshPipeline(impl)) {
             release();
             return stats;
@@ -553,12 +549,10 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
     clearRect.rect.offset.y = drawArea.y();
     clearRect.rect.extent.width = static_cast<std::uint32_t>(drawArea.width());
     clearRect.rect.extent.height = static_cast<std::uint32_t>(drawArea.height());
-    clearRect.baseArrayLayer = 0;
     clearRect.layerCount = 1;
 
     window->beginExternalCommands();
-    auto* commandBufferHandle = static_cast<VkCommandBuffer*>(rendererInterface->getResource(
-        window, QSGRendererInterface::CommandListResource));
+    auto* commandBufferHandle = static_cast<VkCommandBuffer*>(rendererInterface->getResource(window, QSGRendererInterface::CommandListResource));
     if (!commandBufferHandle || !*commandBufferHandle) {
         window->endExternalCommands();
         return stats;
@@ -585,8 +579,7 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
     const VkDeviceSize zeroOffset = 0;
     deviceFunctions->vkCmdBindVertexBuffers(commandBuffer, 0, 1, &impl.gridBuffer.buffer, &zeroOffset);
     deviceFunctions->vkCmdPushConstants(commandBuffer, impl.linePipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
-                                        0, static_cast<std::uint32_t>(sizeof(m3d::Mat4)),
-                                        viewProjection_.values.data());
+                                        0, static_cast<std::uint32_t>(sizeof(m3d::Mat4)), viewProjection_.values.data());
     deviceFunctions->vkCmdDraw(commandBuffer, impl.gridVertexCount, 1, 0, 0);
 
     deviceFunctions->vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, impl.meshPipeline);
