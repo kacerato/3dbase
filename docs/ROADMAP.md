@@ -60,7 +60,7 @@ The editor shell is no longer considered source-only: CI compiles it, loads QML 
 
 ## Stage 3 — Vulkan viewport foundation
 
-**Status: in progress. The viewport now renders persistent authored mesh resources through a native Vulkan GPU cache with depth-correct drawing; MSAA, picking and selection visualization remain next.**
+**Status: in progress. The viewport now renders persistent authored mesh resources through a native Vulkan GPU cache with depth-correct multisampled drawing; picking and selection visualization remain next.**
 
 - [x] Immutable `RenderSceneSnapshot` boundary; renderer never receives live `Scene`/selection pointers.
 - [x] Persistent/shareable `MeshResource` identity separated from `SceneObject` identity.
@@ -97,21 +97,20 @@ The editor shell is no longer considered source-only: CI compiles it, loads QML 
 - [x] Mesh depth-test/depth-write policy using the Qt Quick render pass depth attachment.
 - [x] Qt Quick 2D depth writes disabled before first window exposure so QML overlays do not corrupt the 3D depth buffer.
 - [x] Color + depth clear scoped to the viewport rectangle.
+- [x] MSAA policy: 4x requested by default, optional 1/2/4/8 override, Qt QRhi capability fallback, and native Vulkan pipelines matched to the effective swapchain sample count.
 - [ ] Physical Android Vulkan lifecycle/suspend-resume validation. Deferred with APK/device testing.
 - [ ] Device-local/staging-buffer allocator abstraction for larger authored geometry; current cache intentionally uses the simpler validated host-visible upload path.
 - [ ] Vulkan pipeline cache persisted across sessions/devices where valid.
-- [ ] MSAA policy and device quality fallback.
 - [ ] Object ID picking.
 - [ ] Selection outline.
 
 The next Stage 3 implementation order is intentionally:
 
-1. MSAA/sample-count policy with safe device fallback;
-2. object-ID picking;
-3. selection outline;
-4. device-local/staging allocator and upload batching before large imported scenes;
-5. pipeline-cache persistence;
-6. Android physical lifecycle validation when APK testing is allowed.
+1. object-ID picking;
+2. selection outline;
+3. device-local/staging allocator and upload batching before large imported scenes;
+4. pipeline-cache persistence;
+5. Android physical lifecycle validation when APK testing is allowed.
 
 Exit criterion: the real authored scene is visible/selectable in a stable Vulkan viewport across Android lifecycle changes.
 
