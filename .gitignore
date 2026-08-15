@@ -1,0 +1,19 @@
+# Build output
+/build/
+/out/
+/.cache/
+CMakeUserPresets.json
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Mobile3D generated project data
+*.tmp
+*.autosave
