@@ -9,7 +9,7 @@ ApplicationWindow {
 
     required property var controller
 
-    visible: true
+    visible: false
     width: 1280
     height: 720
     minimumWidth: 360

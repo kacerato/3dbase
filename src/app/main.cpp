@@ -6,6 +6,7 @@
 #include <QDebug>
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQuickGraphicsConfiguration>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
@@ -66,13 +67,20 @@ int main(int argc, char* argv[]) {
     engine.setInitialProperties(initialProperties);
     engine.loadFromModule(QStringLiteral("Mobile3D"), QStringLiteral("Main"));
     if (engine.rootObjects().isEmpty()) return -1;
+
+    auto* rootWindow = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+    if (!rootWindow) return -2;
     if (smokeTest) return 0;
 
+    auto graphicsConfiguration = rootWindow->graphicsConfiguration();
+    graphicsConfiguration.setDepthBufferFor2D(false);
+    rootWindow->setGraphicsConfiguration(graphicsConfiguration);
+    rootWindow->show();
+
     if (vulkanSmokeTest) {
-        QObject* root = engine.rootObjects().constFirst();
+        QObject* root = rootWindow;
         QTimer::singleShot(1500, &app, [&app, root] {
-            auto* viewport = root ? root->findChild<VulkanViewport*>(QStringLiteral("nativeVulkanViewport"))
-                                  : nullptr;
+            auto* viewport = root->findChild<VulkanViewport*>(QStringLiteral("nativeVulkanViewport"));
             const bool passed = viewport && viewport->vulkanActive() &&
                                 viewport->recordedFrameCount() > 0 &&
                                 viewport->recordedMeshDrawCount() > 0;
