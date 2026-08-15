@@ -1,4 +1,5 @@
 add_library(mobile3d_render STATIC
+    src/render_math.cpp
     src/render_snapshot.cpp
     src/viewport_camera.cpp
 )

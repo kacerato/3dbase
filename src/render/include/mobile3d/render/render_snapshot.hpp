@@ -2,6 +2,7 @@
 
 #include "mobile3d/core/scene.hpp"
 #include "mobile3d/core/selection_model.hpp"
+#include "mobile3d/render/viewport_camera.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -14,12 +15,14 @@ struct RenderMeshSnapshot final {
     std::vector<MeshVertex> vertices;
     std::vector<std::uint32_t> indices;
     std::optional<Bounds3> bounds{};
+    std::uint64_t contentHash{0};
 };
 
 struct RenderObjectSnapshot final {
     ObjectId id{};
     ObjectType type{ObjectType::Empty};
     Transform localTransform{};
+    Mat4 worldTransform{Mat4::identity()};
     std::optional<ObjectId> parent{};
     std::optional<ResourceId> meshResource{};
     bool visible{true};

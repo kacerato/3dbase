@@ -1,18 +1,50 @@
 #include "mobile3d/render/render_snapshot.hpp"
 
+#include "mobile3d/render/render_math.hpp"
+
 #include <algorithm>
+#include <bit>
+#include <functional>
+#include <unordered_map>
 #include <utility>
 
 namespace m3d {
+namespace {
+
+constexpr std::uint64_t kFnvOffset = 14695981039346656037ULL;
+constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+
+void hashWord(std::uint64_t& hash, std::uint32_t word) noexcept {
+    for (unsigned int shift = 0; shift < 32U; shift += 8U) {
+        hash ^= static_cast<std::uint8_t>((word >> shift) & 0xFFU);
+        hash *= kFnvPrime;
+    }
+}
+
+std::uint64_t meshContentHash(const MeshResource& mesh) noexcept {
+    std::uint64_t hash = kFnvOffset;
+    hashWord(hash, static_cast<std::uint32_t>(mesh.vertices.size()));
+    hashWord(hash, static_cast<std::uint32_t>(mesh.indices.size()));
+    for (const auto& vertex : mesh.vertices) {
+        hashWord(hash, std::bit_cast<std::uint32_t>(vertex.position.x));
+        hashWord(hash, std::bit_cast<std::uint32_t>(vertex.position.y));
+        hashWord(hash, std::bit_cast<std::uint32_t>(vertex.position.z));
+        hashWord(hash, std::bit_cast<std::uint32_t>(vertex.normal.x));
+        hashWord(hash, std::bit_cast<std::uint32_t>(vertex.normal.y));
+        hashWord(hash, std::bit_cast<std::uint32_t>(vertex.normal.z));
+    }
+    for (const auto index : mesh.indices) hashWord(hash, index);
+    return hash;
+}
+
+} // namespace
 
 RenderSceneSnapshot::RenderSceneSnapshot(std::uint64_t sceneRevision,
                                          std::uint64_t selectionRevision,
                                          std::vector<RenderObjectSnapshot> objects,
                                          std::vector<RenderMeshSnapshot> meshes)
-    : sceneRevision_(sceneRevision),
-      selectionRevision_(selectionRevision),
-      objects_(std::move(objects)),
-      meshes_(std::move(meshes)) {}
+    : sceneRevision_(sceneRevision), selectionRevision_(selectionRevision),
+      objects_(std::move(objects)), meshes_(std::move(meshes)) {}
 
 const RenderObjectSnapshot* RenderSceneSnapshot::find(ObjectId id) const noexcept {
     const auto found = std::find_if(objects_.cbegin(), objects_.cend(),
@@ -52,8 +84,20 @@ RenderSceneSnapshot RenderSnapshotBuilder::build(const Scene& scene,
             .vertices = mesh.vertices,
             .indices = mesh.indices,
             .bounds = mesh.bounds(),
+            .contentHash = meshContentHash(mesh),
         });
     }
+
+    std::unordered_map<ObjectId, Mat4, ObjectIdHash> worldCache;
+    std::function<Mat4(ObjectId)> resolveWorld = [&](ObjectId id) -> Mat4 {
+        if (const auto found = worldCache.find(id); found != worldCache.end()) return found->second;
+        const auto* object = scene.find(id);
+        if (!object) return Mat4::identity();
+        Mat4 world = transformMatrix(object->localTransform);
+        if (object->parent) world = multiply(resolveWorld(*object->parent), world);
+        worldCache.emplace(id, world);
+        return world;
+    };
 
     const auto active = selection.active();
     std::vector<RenderObjectSnapshot> snapshots;
@@ -63,6 +107,7 @@ RenderSceneSnapshot RenderSnapshotBuilder::build(const Scene& scene,
             .id = object.id,
             .type = object.type,
             .localTransform = object.localTransform,
+            .worldTransform = resolveWorld(object.id),
             .parent = object.parent,
             .meshResource = object.meshResource,
             .visible = object.visible,

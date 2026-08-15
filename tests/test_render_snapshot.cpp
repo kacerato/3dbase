@@ -7,6 +7,9 @@ TEST_CASE("render snapshot is an immutable deterministic copy of scene presentat
     m3d::SelectionModel selection;
 
     const auto parent = scene.createObject(m3d::ObjectType::Empty, "Parent");
+    m3d::Transform parentTransform;
+    parentTransform.position = {5.0F, 0.0F, 0.0F};
+    REQUIRE(scene.setTransform(parent, parentTransform));
     const auto mesh = scene.createObject(m3d::ObjectType::Mesh, "Mesh", parent);
     const auto resource = scene.createMeshResource(m3d::MeshResource::makeCube("Geometry", 2.0F));
     REQUIRE(scene.assignMesh(mesh, resource));
@@ -29,6 +32,9 @@ TEST_CASE("render snapshot is an immutable deterministic copy of scene presentat
     REQUIRE(meshSnapshot->parent == parent);
     REQUIRE(meshSnapshot->meshResource == resource);
     REQUIRE(meshSnapshot->localTransform == authoredTransform);
+    REQUIRE(meshSnapshot->worldTransform.at(0, 3) == 7.0F);
+    REQUIRE(meshSnapshot->worldTransform.at(1, 3) == 3.0F);
+    REQUIRE(meshSnapshot->worldTransform.at(2, 3) == 4.0F);
     REQUIRE(meshSnapshot->visible);
     REQUIRE(meshSnapshot->selected);
     REQUIRE(meshSnapshot->active);
@@ -38,6 +44,8 @@ TEST_CASE("render snapshot is an immutable deterministic copy of scene presentat
     REQUIRE(geometry->vertices.size() == 24);
     REQUIRE(geometry->indices.size() == 36);
     REQUIRE(geometry->bounds.has_value());
+    REQUIRE(geometry->contentHash != 0);
+    const auto originalHash = geometry->contentHash;
     REQUIRE((geometry->bounds->min == m3d::Vec3{-1.0F, -1.0F, -1.0F}));
     REQUIRE((geometry->bounds->max == m3d::Vec3{1.0F, 1.0F, 1.0F}));
 
@@ -55,6 +63,10 @@ TEST_CASE("render snapshot is an immutable deterministic copy of scene presentat
     REQUIRE(meshSnapshot->active);
     REQUIRE(geometry != nullptr);
     REQUIRE(geometry->vertices.front().position.x == -1.0F);
+    REQUIRE(geometry->contentHash == originalHash);
+
+    const auto changedSnapshot = m3d::RenderSnapshotBuilder::build(scene, selection, 18, 10);
+    REQUIRE(changedSnapshot.findMesh(resource)->contentHash != originalHash);
 }
 
 TEST_CASE("render snapshot retains hidden objects and their explicit visibility state") {
