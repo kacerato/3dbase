@@ -106,11 +106,19 @@ int main(int argc, char* argv[]) {
 
     if (vulkanSmokeTest) {
         QObject* root = rootWindow;
-        QTimer::singleShot(1500, &app, [&app, root] {
+        QTimer::singleShot(500, &app, [root] {
+            auto* viewport = root->findChild<VulkanViewport*>(QStringLiteral("nativeVulkanViewport"));
+            if (viewport && viewport->width() > 0.0 && viewport->height() > 0.0) {
+                viewport->requestPickAt(viewport->width() * 0.5, viewport->height() * 0.5);
+            }
+        });
+        QTimer::singleShot(2500, &app, [&app, root] {
             auto* viewport = root->findChild<VulkanViewport*>(QStringLiteral("nativeVulkanViewport"));
             const bool passed = viewport && viewport->vulkanActive() &&
                                 viewport->recordedFrameCount() > 0 &&
-                                viewport->recordedMeshDrawCount() > 0;
+                                viewport->recordedMeshDrawCount() > 0 &&
+                                viewport->completedPickCount() > 0 &&
+                                viewport->successfulPickCount() > 0;
             app.exit(passed ? 0 : 4);
         });
     }
