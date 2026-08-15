@@ -1,4 +1,4 @@
-name: Host C++ Tests
+name: Host Validation
 
 on:
   push:
@@ -7,12 +7,13 @@ on:
 
 jobs:
   core-editor:
+    name: Core + Editor
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Configure
         run: >-
-          cmake -S . -B build
+          cmake -S . -B build -G Ninja
           -DMOBILE3D_BUILD_TESTS=ON
           -DMOBILE3D_BUILD_QT_APP=OFF
           -DMOBILE3D_WARNINGS_AS_ERRORS=ON
@@ -20,3 +21,33 @@ jobs:
         run: cmake --build build --parallel
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+  qt-shell:
+    name: Qt/QML shell
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt 6.8
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: linux
+          target: desktop
+          cache: true
+      - name: Configure Qt shell
+        run: >-
+          cmake -S . -B build-qt -G Ninja
+          -DMOBILE3D_BUILD_TESTS=ON
+          -DMOBILE3D_BUILD_QT_APP=ON
+          -DMOBILE3D_WARNINGS_AS_ERRORS=ON
+      - name: Build Qt shell
+        run: cmake --build build-qt --parallel
+      - name: Core + Editor tests under Qt build
+        run: ctest --test-dir build-qt --output-on-failure
+      - name: QML static analysis
+        run: cmake --build build-qt --target mobile3d_studio_qmllint
+      - name: QML runtime smoke test
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: ./build-qt/src/app/Mobile3DStudio --smoke-test
