@@ -11,7 +11,7 @@ class EditorController;
 class QQuickWindow;
 class VulkanViewportRenderer;
 
-class VulkanViewport final : public QQuickItem {
+class VulkanViewport : public QQuickItem {
     Q_OBJECT
     QML_ELEMENT
 
