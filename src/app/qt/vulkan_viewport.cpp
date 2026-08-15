@@ -83,9 +83,7 @@ public:
             window, QSGRendererInterface::VulkanInstanceResource));
         auto* deviceHandle = static_cast<VkDevice*>(rendererInterface->getResource(
             window, QSGRendererInterface::DeviceResource));
-        auto* commandBufferHandle = static_cast<VkCommandBuffer*>(rendererInterface->getResource(
-            window, QSGRendererInterface::CommandListResource));
-        if (!instance || !deviceHandle || !commandBufferHandle || !*deviceHandle || !*commandBufferHandle) {
+        if (!instance || !deviceHandle || !*deviceHandle) {
             return false;
         }
 
@@ -128,7 +126,18 @@ public:
         clearRect.baseArrayLayer = 0;
         clearRect.layerCount = 1;
 
+        // Qt 6 may provide a dedicated secondary command buffer for external
+        // commands, so CommandListResource must be queried after this call.
+        window->beginExternalCommands();
+        auto* commandBufferHandle = static_cast<VkCommandBuffer*>(rendererInterface->getResource(
+            window, QSGRendererInterface::CommandListResource));
+        if (!commandBufferHandle || !*commandBufferHandle) {
+            window->endExternalCommands();
+            return false;
+        }
+
         deviceFunctions->vkCmdClearAttachments(*commandBufferHandle, 1, &clearAttachment, 1, &clearRect);
+        window->endExternalCommands();
         return true;
     }
 
