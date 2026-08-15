@@ -10,6 +10,9 @@
 #include <QString>
 #include <QtQml/qqmlregistration.h>
 
+#include <atomic>
+#include <cstdint>
+
 class EditorController;
 class QMouseEvent;
 class QQuickWindow;
@@ -39,6 +42,9 @@ public:
     [[nodiscard]] QString projectionName() const;
     [[nodiscard]] double cameraDistance() const noexcept {
         return static_cast<double>(camera_.distance());
+    }
+    [[nodiscard]] std::uint64_t recordedFrameCount() const noexcept {
+        return recordedFrameCount_.load(std::memory_order_relaxed);
     }
 
     Q_INVOKABLE void toggleProjection();
@@ -79,6 +85,7 @@ private:
     float lastTouchSpan_{0.0F};
     qsizetype lastTouchPointCount_{0};
     Qt::MouseButton navigationButton_{Qt::NoButton};
+    std::atomic_uint64_t recordedFrameCount_{0};
     bool vulkanActive_{false};
     QString backendName_{QStringLiteral("Unavailable")};
 };

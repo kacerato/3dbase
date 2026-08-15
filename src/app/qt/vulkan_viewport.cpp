@@ -69,14 +69,14 @@ public:
         viewProjection_ = viewProjection;
     }
 
-    void record(QQuickWindow* window) {
+    [[nodiscard]] bool record(QQuickWindow* window) {
         if (!window || viewportPixels_.isEmpty()) {
-            return;
+            return false;
         }
 
         auto* rendererInterface = window->rendererInterface();
         if (!rendererInterface || rendererInterface->graphicsApi() != QSGRendererInterface::Vulkan) {
-            return;
+            return false;
         }
 
         auto* instance = static_cast<QVulkanInstance*>(rendererInterface->getResource(
@@ -86,12 +86,12 @@ public:
         auto* commandBufferHandle = static_cast<VkCommandBuffer*>(rendererInterface->getResource(
             window, QSGRendererInterface::CommandListResource));
         if (!instance || !deviceHandle || !commandBufferHandle || !*deviceHandle || !*commandBufferHandle) {
-            return;
+            return false;
         }
 
         auto* deviceFunctions = instance->deviceFunctions(*deviceHandle);
         if (!deviceFunctions) {
-            return;
+            return false;
         }
 
         const qreal dpr = window->devicePixelRatio();
@@ -102,7 +102,7 @@ public:
         const QRect framebufferRect(QPoint(0, 0), framebufferSize);
         const QRect clearArea = viewportPixels_.intersected(framebufferRect);
         if (clearArea.isEmpty()) {
-            return;
+            return false;
         }
 
         const bool hasSelection = std::any_of(snapshot_.objects().cbegin(), snapshot_.objects().cend(),
@@ -129,6 +129,7 @@ public:
         clearRect.layerCount = 1;
 
         deviceFunctions->vkCmdClearAttachments(*commandBufferHandle, 1, &clearAttachment, 1, &clearRect);
+        return true;
     }
 
 private:
@@ -342,8 +343,8 @@ void VulkanViewport::cleanup() {
 }
 
 void VulkanViewport::recordVulkanCommands() {
-    if (renderer_) {
-        renderer_->record(window());
+    if (renderer_ && renderer_->record(window())) {
+        recordedFrameCount_.fetch_add(1, std::memory_order_relaxed);
     }
 }
 

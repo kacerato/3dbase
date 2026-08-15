@@ -30,7 +30,7 @@ jobs:
       - name: Install Vulkan host development/runtime
         run: |
           sudo apt-get update
-          sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers
+          sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers xvfb xauth
       - name: Install Qt 6.8
         uses: jurplel/install-qt-action@v4
         with:
@@ -55,6 +55,13 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QT_QUICK_BACKEND: software
         run: ./build-qt/src/app/Mobile3DStudio --smoke-test
+      - name: Native Vulkan command smoke test
+        shell: bash
+        run: |
+          VULKAN_ICD="$(find /usr/share/vulkan/icd.d -maxdepth 1 -type f -name 'lvp_icd*.json' | head -n 1)"
+          test -n "$VULKAN_ICD"
+          export VK_DRIVER_FILES="$VULKAN_ICD"
+          xvfb-run -a ./build-qt/src/app/Mobile3DStudio --vulkan-smoke-test
 
   android-arm64:
     name: Android arm64 native cross-build
