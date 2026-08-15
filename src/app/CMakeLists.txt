@@ -47,6 +47,7 @@ target_link_libraries(mobile3d_studio
         Mobile3D::Render
         Qt6::Core
         Qt6::Gui
+        Qt6::GuiPrivate
         Qt6::Qml
         Qt6::Quick
         Qt6::QuickControls2
