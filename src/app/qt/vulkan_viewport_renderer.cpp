@@ -3,8 +3,10 @@
 #include "vulkan_shader_library.hpp"
 
 #include <QByteArray>
+#include <QDebug>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QSize>
 #include <QVulkanDeviceFunctions>
 #include <QVulkanFunctions>
 #include <QVulkanInstance>
@@ -16,6 +18,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -65,11 +68,35 @@ struct GpuBuffer final {
     VkDeviceMemory memory{VK_NULL_HANDLE};
 };
 
+struct GpuImage final {
+    VkImage image{VK_NULL_HANDLE};
+    VkDeviceMemory memory{VK_NULL_HANDLE};
+    VkImageView view{VK_NULL_HANDLE};
+};
+
 struct GpuMesh final {
     GpuBuffer vertex;
     GpuBuffer index;
     std::uint32_t indexCount{0};
     std::uint64_t contentHash{0};
+};
+
+struct PickReadbackSlot final {
+    GpuBuffer buffer;
+    bool pending{false};
+    std::vector<m3d::ObjectId> pickObjects;
+};
+
+struct PickTarget final {
+    QSize size;
+    VkFormat depthFormat{VK_FORMAT_UNDEFINED};
+    GpuImage color;
+    GpuImage depth;
+    VkRenderPass renderPass{VK_NULL_HANDLE};
+    VkFramebuffer framebuffer{VK_NULL_HANDLE};
+    VkPipelineLayout pipelineLayout{VK_NULL_HANDLE};
+    VkPipeline pipeline{VK_NULL_HANDLE};
+    std::vector<PickReadbackSlot> readbacks;
 };
 
 [[nodiscard]] std::vector<LineVertex> makeGridVertices() {
@@ -98,6 +125,23 @@ struct GpuMesh final {
     return vertices;
 }
 
+[[nodiscard]] std::array<float, 4> encodePickColor(m3d::PickId pickId) noexcept {
+    constexpr float scale = 1.0F / 255.0F;
+    return {
+        static_cast<float>(pickId & 0xFFU) * scale,
+        static_cast<float>((pickId >> 8U) & 0xFFU) * scale,
+        static_cast<float>((pickId >> 16U) & 0xFFU) * scale,
+        static_cast<float>((pickId >> 24U) & 0xFFU) * scale,
+    };
+}
+
+[[nodiscard]] m3d::PickId decodePickColor(const std::array<std::uint8_t, 4>& value) noexcept {
+    return static_cast<m3d::PickId>(value[0]) |
+           (static_cast<m3d::PickId>(value[1]) << 8U) |
+           (static_cast<m3d::PickId>(value[2]) << 16U) |
+           (static_cast<m3d::PickId>(value[3]) << 24U);
+}
+
 [[nodiscard]] std::optional<std::uint32_t> findMemoryType(QVulkanFunctions* functions,
                                                            VkPhysicalDevice physicalDevice,
                                                            std::uint32_t typeBits,
@@ -117,6 +161,15 @@ void destroyBuffer(QVulkanDeviceFunctions* functions, VkDevice device, GpuBuffer
         if (buffer.memory) functions->vkFreeMemory(device, buffer.memory, nullptr);
     }
     buffer = {};
+}
+
+void destroyImage(QVulkanDeviceFunctions* functions, VkDevice device, GpuImage& image) {
+    if (functions && device) {
+        if (image.view) functions->vkDestroyImageView(device, image.view, nullptr);
+        if (image.image) functions->vkDestroyImage(device, image.image, nullptr);
+        if (image.memory) functions->vkFreeMemory(device, image.memory, nullptr);
+    }
+    image = {};
 }
 
 [[nodiscard]] bool createHostBuffer(QVulkanFunctions* functions,
@@ -166,6 +219,87 @@ void destroyBuffer(QVulkanDeviceFunctions* functions, VkDevice device, GpuBuffer
     std::memcpy(mapped, data, static_cast<std::size_t>(size));
     deviceFunctions->vkUnmapMemory(device, output.memory);
     return true;
+}
+
+[[nodiscard]] bool createDeviceImage(QVulkanFunctions* functions,
+                                     QVulkanDeviceFunctions* deviceFunctions,
+                                     VkPhysicalDevice physicalDevice,
+                                     VkDevice device,
+                                     QSize size,
+                                     VkFormat format,
+                                     VkImageUsageFlags usage,
+                                     VkImageAspectFlags aspect,
+                                     GpuImage& output) {
+    output = {};
+    if (size.isEmpty()) return false;
+
+    auto imageInfo = vkInfo<VkImageCreateInfo>(VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO);
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.format = format;
+    imageInfo.extent.width = static_cast<std::uint32_t>(size.width());
+    imageInfo.extent.height = static_cast<std::uint32_t>(size.height());
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.usage = usage;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (deviceFunctions->vkCreateImage(device, &imageInfo, nullptr, &output.image) != VK_SUCCESS) return false;
+
+    VkMemoryRequirements requirements{};
+    deviceFunctions->vkGetImageMemoryRequirements(device, output.image, &requirements);
+    const auto memoryType = findMemoryType(functions, physicalDevice, requirements.memoryTypeBits,
+                                           VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (!memoryType) {
+        destroyImage(deviceFunctions, device, output);
+        return false;
+    }
+
+    auto allocation = vkInfo<VkMemoryAllocateInfo>(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = *memoryType;
+    if (deviceFunctions->vkAllocateMemory(device, &allocation, nullptr, &output.memory) != VK_SUCCESS) {
+        destroyImage(deviceFunctions, device, output);
+        return false;
+    }
+    if (deviceFunctions->vkBindImageMemory(device, output.image, output.memory, 0) != VK_SUCCESS) {
+        destroyImage(deviceFunctions, device, output);
+        return false;
+    }
+
+    auto viewInfo = vkInfo<VkImageViewCreateInfo>(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO);
+    viewInfo.image = output.image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = format;
+    viewInfo.subresourceRange.aspectMask = aspect;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+    if (deviceFunctions->vkCreateImageView(device, &viewInfo, nullptr, &output.view) != VK_SUCCESS) {
+        destroyImage(deviceFunctions, device, output);
+        return false;
+    }
+    return true;
+}
+
+[[nodiscard]] VkFormat chooseDepthFormat(QVulkanFunctions* functions,
+                                         VkPhysicalDevice physicalDevice) noexcept {
+    constexpr std::array<VkFormat, 3> candidates{
+        VK_FORMAT_D32_SFLOAT,
+        VK_FORMAT_D24_UNORM_S8_UINT,
+        VK_FORMAT_D16_UNORM,
+    };
+    for (const auto format : candidates) {
+        VkFormatProperties properties{};
+        functions->vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &properties);
+        if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0U) {
+            return format;
+        }
+    }
+    return VK_FORMAT_UNDEFINED;
 }
 
 [[nodiscard]] VkShaderModule createShaderModule(QVulkanDeviceFunctions* functions,
@@ -247,6 +381,7 @@ struct VulkanViewportRenderer::Impl final {
     VkPipelineLayout meshPipelineLayout{VK_NULL_HANDLE};
     VkPipeline meshPipeline{VK_NULL_HANDLE};
     std::unordered_map<m3d::ResourceId, GpuMesh, m3d::ResourceIdHash> meshCache;
+    PickTarget pickTarget;
 };
 
 VulkanViewportRenderer::VulkanViewportRenderer() : impl_(std::make_unique<Impl>()) {}
@@ -257,6 +392,10 @@ void VulkanViewportRenderer::synchronize(QRect viewportPixels, m3d::RenderSceneS
     viewportPixels_ = viewportPixels;
     snapshot_ = std::move(snapshot);
     viewProjection_ = viewProjection;
+}
+
+void VulkanViewportRenderer::requestPick(QPoint viewportPixel) {
+    pendingPickPixel_ = viewportPixel;
 }
 
 namespace {
@@ -270,10 +409,19 @@ bool createGridResources(VulkanViewportRenderer::Impl& impl) {
     return true;
 }
 
-bool createLinePipeline(VulkanViewportRenderer::Impl& impl) {
+bool createPipeline(VulkanViewportRenderer::Impl& impl,
+                    VkRenderPass renderPass,
+                    VkSampleCountFlagBits sampleCount,
+                    bool linePipeline,
+                    VkPipelineLayout& layout,
+                    VkPipeline& pipeline) {
     QString error;
-    const auto vertexCode = VulkanShaderLibrary::viewportLineVertexSpirv(&error);
-    const auto fragmentCode = VulkanShaderLibrary::viewportLineFragmentSpirv(&error);
+    const auto vertexCode = linePipeline
+        ? VulkanShaderLibrary::viewportLineVertexSpirv(&error)
+        : VulkanShaderLibrary::viewportMeshVertexSpirv(&error);
+    const auto fragmentCode = linePipeline
+        ? VulkanShaderLibrary::viewportLineFragmentSpirv(&error)
+        : VulkanShaderLibrary::viewportMeshFragmentSpirv(&error);
     const VkShaderModule vertexModule = createShaderModule(impl.deviceFunctions, impl.device, vertexCode);
     const VkShaderModule fragmentModule = createShaderModule(impl.deviceFunctions, impl.device, fragmentCode);
     if (!vertexModule || !fragmentModule) {
@@ -284,12 +432,13 @@ bool createLinePipeline(VulkanViewportRenderer::Impl& impl) {
 
     VkPushConstantRange push{};
     push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    push.size = static_cast<std::uint32_t>(sizeof(m3d::Mat4));
+    push.size = linePipeline
+        ? static_cast<std::uint32_t>(sizeof(m3d::Mat4))
+        : static_cast<std::uint32_t>(sizeof(MeshPushConstants));
     auto layoutInfo = vkInfo<VkPipelineLayoutCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
     layoutInfo.pushConstantRangeCount = 1;
     layoutInfo.pPushConstantRanges = &push;
-    if (impl.deviceFunctions->vkCreatePipelineLayout(impl.device, &layoutInfo, nullptr,
-                                                      &impl.linePipelineLayout) != VK_SUCCESS) {
+    if (impl.deviceFunctions->vkCreatePipelineLayout(impl.device, &layoutInfo, nullptr, &layout) != VK_SUCCESS) {
         impl.deviceFunctions->vkDestroyShaderModule(impl.device, vertexModule, nullptr);
         impl.deviceFunctions->vkDestroyShaderModule(impl.device, fragmentModule, nullptr);
         return false;
@@ -307,113 +456,58 @@ bool createLinePipeline(VulkanViewportRenderer::Impl& impl) {
 
     VkVertexInputBindingDescription binding{};
     binding.binding = 0;
-    binding.stride = static_cast<std::uint32_t>(sizeof(LineVertex));
+    binding.stride = linePipeline
+        ? static_cast<std::uint32_t>(sizeof(LineVertex))
+        : static_cast<std::uint32_t>(sizeof(m3d::MeshVertex));
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
     std::array<VkVertexInputAttributeDescription, 2> attributes{};
-    attributes[0] = {0, 0, VK_FORMAT_R32G32B32_SFLOAT, static_cast<std::uint32_t>(offsetof(LineVertex, x))};
-    attributes[1] = {1, 0, VK_FORMAT_R32G32B32A32_SFLOAT, static_cast<std::uint32_t>(offsetof(LineVertex, r))};
+    attributes[0].location = 0;
+    attributes[0].binding = 0;
+    attributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributes[0].offset = linePipeline
+        ? static_cast<std::uint32_t>(offsetof(LineVertex, x))
+        : static_cast<std::uint32_t>(offsetof(m3d::MeshVertex, position));
+    if (linePipeline) {
+        attributes[1].location = 1;
+        attributes[1].binding = 0;
+        attributes[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+        attributes[1].offset = static_cast<std::uint32_t>(offsetof(LineVertex, r));
+    }
 
     auto vertexInput = vkInfo<VkPipelineVertexInputStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO);
     vertexInput.vertexBindingDescriptionCount = 1;
     vertexInput.pVertexBindingDescriptions = &binding;
-    vertexInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributes.size());
+    vertexInput.vertexAttributeDescriptionCount = linePipeline ? 2U : 1U;
     vertexInput.pVertexAttributeDescriptions = attributes.data();
-    auto assembly = vkInfo<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);
-    assembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-    PipelineCommonState common(false, vulkanSampleCount(impl.sampleCount));
 
-    auto pipeline = vkInfo<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
-    pipeline.stageCount = static_cast<std::uint32_t>(stages.size());
-    pipeline.pStages = stages.data();
-    pipeline.pVertexInputState = &vertexInput;
-    pipeline.pInputAssemblyState = &assembly;
-    pipeline.pViewportState = &common.viewport;
-    pipeline.pRasterizationState = &common.raster;
-    pipeline.pMultisampleState = &common.multisample;
-    pipeline.pDepthStencilState = &common.depthStencil;
-    pipeline.pColorBlendState = &common.blend;
-    pipeline.pDynamicState = &common.dynamic;
-    pipeline.layout = impl.linePipelineLayout;
-    pipeline.renderPass = impl.renderPass;
-    pipeline.subpass = 0;
+    auto assembly = vkInfo<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);
+    assembly.topology = linePipeline ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    PipelineCommonState common(!linePipeline, sampleCount);
+
+    auto pipelineInfo = vkInfo<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
+    pipelineInfo.stageCount = static_cast<std::uint32_t>(stages.size());
+    pipelineInfo.pStages = stages.data();
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &assembly;
+    pipelineInfo.pViewportState = &common.viewport;
+    pipelineInfo.pRasterizationState = &common.raster;
+    pipelineInfo.pMultisampleState = &common.multisample;
+    pipelineInfo.pDepthStencilState = &common.depthStencil;
+    pipelineInfo.pColorBlendState = &common.blend;
+    pipelineInfo.pDynamicState = &common.dynamic;
+    pipelineInfo.layout = layout;
+    pipelineInfo.renderPass = renderPass;
+    pipelineInfo.subpass = 0;
+
     const bool success = impl.deviceFunctions->vkCreateGraphicsPipelines(
-        impl.device, VK_NULL_HANDLE, 1, &pipeline, nullptr, &impl.linePipeline) == VK_SUCCESS;
+        impl.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) == VK_SUCCESS;
     impl.deviceFunctions->vkDestroyShaderModule(impl.device, vertexModule, nullptr);
     impl.deviceFunctions->vkDestroyShaderModule(impl.device, fragmentModule, nullptr);
-    return success;
-}
-
-bool createMeshPipeline(VulkanViewportRenderer::Impl& impl) {
-    QString error;
-    const auto vertexCode = VulkanShaderLibrary::viewportMeshVertexSpirv(&error);
-    const auto fragmentCode = VulkanShaderLibrary::viewportMeshFragmentSpirv(&error);
-    const VkShaderModule vertexModule = createShaderModule(impl.deviceFunctions, impl.device, vertexCode);
-    const VkShaderModule fragmentModule = createShaderModule(impl.deviceFunctions, impl.device, fragmentCode);
-    if (!vertexModule || !fragmentModule) {
-        if (vertexModule) impl.deviceFunctions->vkDestroyShaderModule(impl.device, vertexModule, nullptr);
-        if (fragmentModule) impl.deviceFunctions->vkDestroyShaderModule(impl.device, fragmentModule, nullptr);
-        return false;
+    if (!success) {
+        impl.deviceFunctions->vkDestroyPipelineLayout(impl.device, layout, nullptr);
+        layout = VK_NULL_HANDLE;
     }
-
-    VkPushConstantRange push{};
-    push.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    push.size = static_cast<std::uint32_t>(sizeof(MeshPushConstants));
-    auto layoutInfo = vkInfo<VkPipelineLayoutCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO);
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges = &push;
-    if (impl.deviceFunctions->vkCreatePipelineLayout(impl.device, &layoutInfo, nullptr,
-                                                      &impl.meshPipelineLayout) != VK_SUCCESS) {
-        impl.deviceFunctions->vkDestroyShaderModule(impl.device, vertexModule, nullptr);
-        impl.deviceFunctions->vkDestroyShaderModule(impl.device, fragmentModule, nullptr);
-        return false;
-    }
-
-    std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
-    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = vertexModule;
-    stages[0].pName = "main";
-    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = fragmentModule;
-    stages[1].pName = "main";
-
-    VkVertexInputBindingDescription binding{};
-    binding.binding = 0;
-    binding.stride = static_cast<std::uint32_t>(sizeof(m3d::MeshVertex));
-    binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    VkVertexInputAttributeDescription attribute{};
-    attribute.location = 0;
-    attribute.binding = 0;
-    attribute.format = VK_FORMAT_R32G32B32_SFLOAT;
-    attribute.offset = static_cast<std::uint32_t>(offsetof(m3d::MeshVertex, position));
-    auto vertexInput = vkInfo<VkPipelineVertexInputStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO);
-    vertexInput.vertexBindingDescriptionCount = 1;
-    vertexInput.pVertexBindingDescriptions = &binding;
-    vertexInput.vertexAttributeDescriptionCount = 1;
-    vertexInput.pVertexAttributeDescriptions = &attribute;
-    auto assembly = vkInfo<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);
-    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    PipelineCommonState common(true, vulkanSampleCount(impl.sampleCount));
-
-    auto pipeline = vkInfo<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
-    pipeline.stageCount = static_cast<std::uint32_t>(stages.size());
-    pipeline.pStages = stages.data();
-    pipeline.pVertexInputState = &vertexInput;
-    pipeline.pInputAssemblyState = &assembly;
-    pipeline.pViewportState = &common.viewport;
-    pipeline.pRasterizationState = &common.raster;
-    pipeline.pMultisampleState = &common.multisample;
-    pipeline.pDepthStencilState = &common.depthStencil;
-    pipeline.pColorBlendState = &common.blend;
-    pipeline.pDynamicState = &common.dynamic;
-    pipeline.layout = impl.meshPipelineLayout;
-    pipeline.renderPass = impl.renderPass;
-    pipeline.subpass = 0;
-    const bool success = impl.deviceFunctions->vkCreateGraphicsPipelines(
-        impl.device, VK_NULL_HANDLE, 1, &pipeline, nullptr, &impl.meshPipeline) == VK_SUCCESS;
-    impl.deviceFunctions->vkDestroyShaderModule(impl.device, vertexModule, nullptr);
-    impl.deviceFunctions->vkDestroyShaderModule(impl.device, fragmentModule, nullptr);
     return success;
 }
 
@@ -466,6 +560,189 @@ bool synchronizeMeshCache(VulkanViewportRenderer::Impl& impl,
     return true;
 }
 
+[[nodiscard]] bool meshCacheReady(const VulkanViewportRenderer::Impl& impl,
+                                  const m3d::RenderSceneSnapshot& snapshot) {
+    for (const auto& source : snapshot.meshes()) {
+        const auto found = impl.meshCache.find(source.id);
+        if (found == impl.meshCache.end() || found->second.contentHash != source.contentHash) return false;
+    }
+    return true;
+}
+
+void destroyPickTarget(VulkanViewportRenderer::Impl& impl) {
+    auto& target = impl.pickTarget;
+    for (auto& slot : target.readbacks) destroyBuffer(impl.deviceFunctions, impl.device, slot.buffer);
+    target.readbacks.clear();
+    if (target.pipeline) impl.deviceFunctions->vkDestroyPipeline(impl.device, target.pipeline, nullptr);
+    if (target.pipelineLayout) impl.deviceFunctions->vkDestroyPipelineLayout(impl.device, target.pipelineLayout, nullptr);
+    if (target.framebuffer) impl.deviceFunctions->vkDestroyFramebuffer(impl.device, target.framebuffer, nullptr);
+    if (target.renderPass) impl.deviceFunctions->vkDestroyRenderPass(impl.device, target.renderPass, nullptr);
+    destroyImage(impl.deviceFunctions, impl.device, target.depth);
+    destroyImage(impl.deviceFunctions, impl.device, target.color);
+    target = {};
+}
+
+bool createPickTarget(VulkanViewportRenderer::Impl& impl, QSize size, int framesInFlight) {
+    destroyPickTarget(impl);
+    if (size.isEmpty()) return false;
+
+    auto& target = impl.pickTarget;
+    target.size = size;
+    target.depthFormat = chooseDepthFormat(impl.functions, impl.physicalDevice);
+    if (target.depthFormat == VK_FORMAT_UNDEFINED) return false;
+
+    if (!createDeviceImage(impl.functions, impl.deviceFunctions, impl.physicalDevice, impl.device,
+                           size, VK_FORMAT_R8G8B8A8_UNORM,
+                           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                           VK_IMAGE_ASPECT_COLOR_BIT, target.color)) {
+        destroyPickTarget(impl);
+        return false;
+    }
+    if (!createDeviceImage(impl.functions, impl.deviceFunctions, impl.physicalDevice, impl.device,
+                           size, target.depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                           VK_IMAGE_ASPECT_DEPTH_BIT, target.depth)) {
+        destroyPickTarget(impl);
+        return false;
+    }
+
+    std::array<VkAttachmentDescription, 2> attachments{};
+    attachments[0].format = VK_FORMAT_R8G8B8A8_UNORM;
+    attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachments[0].finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    attachments[1].format = target.depthFormat;
+    attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference colorReference{};
+    colorReference.attachment = 0;
+    colorReference.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    VkAttachmentReference depthReference{};
+    depthReference.attachment = 1;
+    depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorReference;
+    subpass.pDepthStencilAttachment = &depthReference;
+
+    std::array<VkSubpassDependency, 2> dependencies{};
+    dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[0].dstSubpass = 0;
+    dependencies[0].srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                   VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependencies[0].srcAccessMask = 0;
+    dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                                    VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependencies[1].srcSubpass = 0;
+    dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependencies[1].dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependencies[1].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+    auto renderPassInfo = vkInfo<VkRenderPassCreateInfo>(VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO);
+    renderPassInfo.attachmentCount = static_cast<std::uint32_t>(attachments.size());
+    renderPassInfo.pAttachments = attachments.data();
+    renderPassInfo.subpassCount = 1;
+    renderPassInfo.pSubpasses = &subpass;
+    renderPassInfo.dependencyCount = static_cast<std::uint32_t>(dependencies.size());
+    renderPassInfo.pDependencies = dependencies.data();
+    if (impl.deviceFunctions->vkCreateRenderPass(impl.device, &renderPassInfo, nullptr,
+                                                  &target.renderPass) != VK_SUCCESS) {
+        destroyPickTarget(impl);
+        return false;
+    }
+
+    const std::array<VkImageView, 2> views{target.color.view, target.depth.view};
+    auto framebufferInfo = vkInfo<VkFramebufferCreateInfo>(VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO);
+    framebufferInfo.renderPass = target.renderPass;
+    framebufferInfo.attachmentCount = static_cast<std::uint32_t>(views.size());
+    framebufferInfo.pAttachments = views.data();
+    framebufferInfo.width = static_cast<std::uint32_t>(size.width());
+    framebufferInfo.height = static_cast<std::uint32_t>(size.height());
+    framebufferInfo.layers = 1;
+    if (impl.deviceFunctions->vkCreateFramebuffer(impl.device, &framebufferInfo, nullptr,
+                                                   &target.framebuffer) != VK_SUCCESS) {
+        destroyPickTarget(impl);
+        return false;
+    }
+
+    if (!createPipeline(impl, target.renderPass, VK_SAMPLE_COUNT_1_BIT, false,
+                        target.pipelineLayout, target.pipeline)) {
+        destroyPickTarget(impl);
+        return false;
+    }
+
+    const int slotCount = std::max(framesInFlight, 1);
+    target.readbacks.resize(static_cast<std::size_t>(slotCount));
+    constexpr std::array<std::uint8_t, 4> zero{};
+    for (auto& slot : target.readbacks) {
+        if (!createHostBuffer(impl.functions, impl.deviceFunctions, impl.physicalDevice, impl.device,
+                              VK_BUFFER_USAGE_TRANSFER_DST_BIT, zero.data(), zero.size(), slot.buffer)) {
+            destroyPickTarget(impl);
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool anyPendingReadback(const PickTarget& target) noexcept {
+    return std::any_of(target.readbacks.cbegin(), target.readbacks.cend(),
+                       [](const PickReadbackSlot& slot) { return slot.pending; });
+}
+
+VulkanPickResult consumeReadback(VulkanViewportRenderer::Impl& impl, int frameSlot) {
+    VulkanPickResult result;
+    auto& target = impl.pickTarget;
+    if (frameSlot < 0 || static_cast<std::size_t>(frameSlot) >= target.readbacks.size()) return result;
+    auto& slot = target.readbacks[static_cast<std::size_t>(frameSlot)];
+    if (!slot.pending) return result;
+
+    std::array<std::uint8_t, 4> pixel{};
+    void* mapped = nullptr;
+    const VkResult mapResult = impl.deviceFunctions->vkMapMemory(
+        impl.device, slot.buffer.memory, 0, pixel.size(), 0, &mapped);
+    if (mapResult == VK_SUCCESS && mapped) {
+        std::memcpy(pixel.data(), mapped, pixel.size());
+        impl.deviceFunctions->vkUnmapMemory(impl.device, slot.buffer.memory);
+        const m3d::PickId pickId = decodePickColor(pixel);
+        if (pickId != m3d::backgroundPickId &&
+            static_cast<std::size_t>(pickId) < slot.pickObjects.size()) {
+            const auto object = slot.pickObjects[static_cast<std::size_t>(pickId)];
+            if (!object.isNull()) result.object = object;
+        }
+        result.resultReady = true;
+    }
+    slot.pending = false;
+    slot.pickObjects.clear();
+    result.waitingForReadback = anyPendingReadback(target);
+    return result;
+}
+
+void populatePickMap(PickReadbackSlot& slot, const m3d::RenderSceneSnapshot& snapshot) {
+    m3d::PickId maxPickId = 0;
+    for (const auto& object : snapshot.objects()) maxPickId = std::max(maxPickId, object.pickId);
+    slot.pickObjects.assign(static_cast<std::size_t>(maxPickId) + 1U, m3d::ObjectId::null());
+    for (const auto& object : snapshot.objects()) {
+        if (object.pickId != m3d::backgroundPickId &&
+            static_cast<std::size_t>(object.pickId) < slot.pickObjects.size()) {
+            slot.pickObjects[static_cast<std::size_t>(object.pickId)] = object.id;
+        }
+    }
+}
+
 } // namespace
 
 void VulkanViewportRenderer::release() {
@@ -474,6 +751,7 @@ void VulkanViewportRenderer::release() {
         impl = Impl{};
         return;
     }
+    destroyPickTarget(impl);
     for (auto& [id, mesh] : impl.meshCache) {
         (void)id;
         destroyGpuMesh(impl, mesh);
@@ -487,17 +765,173 @@ void VulkanViewportRenderer::release() {
     impl = Impl{};
 }
 
+VulkanPickResult VulkanViewportRenderer::recordPicking(QQuickWindow* window) {
+    VulkanPickResult result;
+    auto& impl = *impl_;
+    if (!window || !impl.device || !impl.deviceFunctions) {
+        result.waitingForReadback = pendingPickPixel_.has_value();
+        return result;
+    }
+
+    const auto stateInfo = window->graphicsStateInfo();
+    if (!impl.pickTarget.readbacks.empty()) {
+        result = consumeReadback(impl, stateInfo.currentFrameSlot);
+    }
+    if (!pendingPickPixel_) {
+        result.waitingForReadback = result.waitingForReadback || anyPendingReadback(impl.pickTarget);
+        return result;
+    }
+
+    auto* rendererInterface = window->rendererInterface();
+    auto* swapchain = rendererInterface
+        ? static_cast<QRhiSwapChain*>(rendererInterface->getResource(
+              window, QSGRendererInterface::RhiSwapchainResource))
+        : nullptr;
+    if (!rendererInterface || rendererInterface->graphicsApi() != QSGRendererInterface::Vulkan ||
+        !swapchain || impl.sampleCount != std::max(1, swapchain->sampleCount()) ||
+        !meshCacheReady(impl, snapshot_)) {
+        result.waitingForReadback = true;
+        return result;
+    }
+
+    const QSize targetSize(viewportPixels_.width(), viewportPixels_.height());
+    if (targetSize.isEmpty()) {
+        pendingPickPixel_.reset();
+        return result;
+    }
+    if (impl.pickTarget.size != targetSize ||
+        static_cast<int>(impl.pickTarget.readbacks.size()) != std::max(stateInfo.framesInFlight, 1)) {
+        if (!createPickTarget(impl, targetSize, stateInfo.framesInFlight)) {
+            result.waitingForReadback = true;
+            return result;
+        }
+    }
+
+    const QPoint requested = *pendingPickPixel_;
+    if (requested.x() < 0 || requested.y() < 0 ||
+        requested.x() >= targetSize.width() || requested.y() >= targetSize.height()) {
+        pendingPickPixel_.reset();
+        result.resultReady = true;
+        result.object.reset();
+        return result;
+    }
+    if (stateInfo.currentFrameSlot < 0 ||
+        static_cast<std::size_t>(stateInfo.currentFrameSlot) >= impl.pickTarget.readbacks.size()) {
+        result.waitingForReadback = true;
+        return result;
+    }
+
+    auto& slot = impl.pickTarget.readbacks[static_cast<std::size_t>(stateInfo.currentFrameSlot)];
+    if (slot.pending) {
+        result.waitingForReadback = true;
+        return result;
+    }
+    populatePickMap(slot, snapshot_);
+
+    window->beginExternalCommands();
+    auto* commandBufferHandle = static_cast<VkCommandBuffer*>(rendererInterface->getResource(
+        window, QSGRendererInterface::CommandListResource));
+    if (!commandBufferHandle || !*commandBufferHandle) {
+        window->endExternalCommands();
+        result.waitingForReadback = true;
+        return result;
+    }
+    const VkCommandBuffer commandBuffer = *commandBufferHandle;
+
+    std::array<VkClearValue, 2> clearValues{};
+    clearValues[0].color.float32[0] = 0.0F;
+    clearValues[0].color.float32[1] = 0.0F;
+    clearValues[0].color.float32[2] = 0.0F;
+    clearValues[0].color.float32[3] = 0.0F;
+    clearValues[1].depthStencil.depth = 1.0F;
+    clearValues[1].depthStencil.stencil = 0;
+
+    auto passInfo = vkInfo<VkRenderPassBeginInfo>(VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO);
+    passInfo.renderPass = impl.pickTarget.renderPass;
+    passInfo.framebuffer = impl.pickTarget.framebuffer;
+    passInfo.renderArea.offset = {0, 0};
+    passInfo.renderArea.extent = {
+        static_cast<std::uint32_t>(targetSize.width()),
+        static_cast<std::uint32_t>(targetSize.height()),
+    };
+    passInfo.clearValueCount = static_cast<std::uint32_t>(clearValues.size());
+    passInfo.pClearValues = clearValues.data();
+    impl.deviceFunctions->vkCmdBeginRenderPass(commandBuffer, &passInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    VkViewport viewport{};
+    viewport.x = 0.0F;
+    viewport.y = 0.0F;
+    viewport.width = static_cast<float>(targetSize.width());
+    viewport.height = static_cast<float>(targetSize.height());
+    viewport.minDepth = 0.0F;
+    viewport.maxDepth = 1.0F;
+    VkRect2D scissor{};
+    scissor.offset.x = requested.x();
+    scissor.offset.y = requested.y();
+    scissor.extent = {1U, 1U};
+    impl.deviceFunctions->vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+    impl.deviceFunctions->vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+    impl.deviceFunctions->vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                            impl.pickTarget.pipeline);
+
+    const VkDeviceSize zeroOffset = 0;
+    for (const auto& object : snapshot_.objects()) {
+        if (!object.visible || object.type != m3d::ObjectType::Mesh || !object.meshResource ||
+            object.pickId == m3d::backgroundPickId) continue;
+        const auto mesh = impl.meshCache.find(*object.meshResource);
+        if (mesh == impl.meshCache.end()) continue;
+        const MeshPushConstants push{
+            m3d::multiply(viewProjection_, object.worldTransform),
+            encodePickColor(object.pickId),
+        };
+        impl.deviceFunctions->vkCmdPushConstants(commandBuffer, impl.pickTarget.pipelineLayout,
+                                                 VK_SHADER_STAGE_VERTEX_BIT, 0,
+                                                 static_cast<std::uint32_t>(sizeof(push)), &push);
+        impl.deviceFunctions->vkCmdBindVertexBuffers(commandBuffer, 0, 1,
+                                                     &mesh->second.vertex.buffer, &zeroOffset);
+        impl.deviceFunctions->vkCmdBindIndexBuffer(commandBuffer, mesh->second.index.buffer,
+                                                   0, VK_INDEX_TYPE_UINT32);
+        impl.deviceFunctions->vkCmdDrawIndexed(commandBuffer, mesh->second.indexCount, 1, 0, 0, 0);
+    }
+    impl.deviceFunctions->vkCmdEndRenderPass(commandBuffer);
+
+    VkBufferImageCopy copy{};
+    copy.bufferOffset = 0;
+    copy.bufferRowLength = 0;
+    copy.bufferImageHeight = 0;
+    copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copy.imageSubresource.mipLevel = 0;
+    copy.imageSubresource.baseArrayLayer = 0;
+    copy.imageSubresource.layerCount = 1;
+    copy.imageOffset = {requested.x(), requested.y(), 0};
+    copy.imageExtent = {1U, 1U, 1U};
+    impl.deviceFunctions->vkCmdCopyImageToBuffer(commandBuffer, impl.pickTarget.color.image,
+                                                 VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                                 slot.buffer.buffer, 1, &copy);
+    window->endExternalCommands();
+
+    slot.pending = true;
+    pendingPickPixel_.reset();
+    result.waitingForReadback = true;
+    return result;
+}
+
 VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
     VulkanRecordStats stats;
     if (!window || viewportPixels_.isEmpty()) return stats;
     auto* rendererInterface = window->rendererInterface();
     if (!rendererInterface || rendererInterface->graphicsApi() != QSGRendererInterface::Vulkan) return stats;
 
-    auto* instance = static_cast<QVulkanInstance*>(rendererInterface->getResource(window, QSGRendererInterface::VulkanInstanceResource));
-    auto* deviceHandle = static_cast<VkDevice*>(rendererInterface->getResource(window, QSGRendererInterface::DeviceResource));
-    auto* physicalHandle = static_cast<VkPhysicalDevice*>(rendererInterface->getResource(window, QSGRendererInterface::PhysicalDeviceResource));
-    auto* renderPassHandle = static_cast<VkRenderPass*>(rendererInterface->getResource(window, QSGRendererInterface::RenderPassResource));
-    auto* swapchain = static_cast<QRhiSwapChain*>(rendererInterface->getResource(window, QSGRendererInterface::RhiSwapchainResource));
+    auto* instance = static_cast<QVulkanInstance*>(rendererInterface->getResource(
+        window, QSGRendererInterface::VulkanInstanceResource));
+    auto* deviceHandle = static_cast<VkDevice*>(rendererInterface->getResource(
+        window, QSGRendererInterface::DeviceResource));
+    auto* physicalHandle = static_cast<VkPhysicalDevice*>(rendererInterface->getResource(
+        window, QSGRendererInterface::PhysicalDeviceResource));
+    auto* renderPassHandle = static_cast<VkRenderPass*>(rendererInterface->getResource(
+        window, QSGRendererInterface::RenderPassResource));
+    auto* swapchain = static_cast<QRhiSwapChain*>(rendererInterface->getResource(
+        window, QSGRendererInterface::RhiSwapchainResource));
     if (!instance || !deviceHandle || !physicalHandle || !renderPassHandle || !swapchain ||
         !*deviceHandle || !*physicalHandle || !*renderPassHandle) return stats;
 
@@ -519,7 +953,11 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
         impl.functions = functions;
         impl.sampleCount = effectiveSampleCount;
         qInfo() << "Vulkan viewport effective MSAA samples:" << impl.sampleCount;
-        if (!createGridResources(impl) || !createLinePipeline(impl) || !createMeshPipeline(impl)) {
+        if (!createGridResources(impl) ||
+            !createPipeline(impl, impl.renderPass, vulkanSampleCount(impl.sampleCount), true,
+                            impl.linePipelineLayout, impl.linePipeline) ||
+            !createPipeline(impl, impl.renderPass, vulkanSampleCount(impl.sampleCount), false,
+                            impl.meshPipelineLayout, impl.meshPipeline)) {
             release();
             return stats;
         }
@@ -549,10 +987,12 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
     clearRect.rect.offset.y = drawArea.y();
     clearRect.rect.extent.width = static_cast<std::uint32_t>(drawArea.width());
     clearRect.rect.extent.height = static_cast<std::uint32_t>(drawArea.height());
+    clearRect.baseArrayLayer = 0;
     clearRect.layerCount = 1;
 
     window->beginExternalCommands();
-    auto* commandBufferHandle = static_cast<VkCommandBuffer*>(rendererInterface->getResource(window, QSGRendererInterface::CommandListResource));
+    auto* commandBufferHandle = static_cast<VkCommandBuffer*>(rendererInterface->getResource(
+        window, QSGRendererInterface::CommandListResource));
     if (!commandBufferHandle || !*commandBufferHandle) {
         window->endExternalCommands();
         return stats;
@@ -575,11 +1015,12 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
     deviceFunctions->vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
     deviceFunctions->vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-    deviceFunctions->vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, impl.linePipeline);
     const VkDeviceSize zeroOffset = 0;
+    deviceFunctions->vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, impl.linePipeline);
     deviceFunctions->vkCmdBindVertexBuffers(commandBuffer, 0, 1, &impl.gridBuffer.buffer, &zeroOffset);
     deviceFunctions->vkCmdPushConstants(commandBuffer, impl.linePipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
-                                        0, static_cast<std::uint32_t>(sizeof(m3d::Mat4)), viewProjection_.values.data());
+                                        0, static_cast<std::uint32_t>(sizeof(m3d::Mat4)),
+                                        viewProjection_.values.data());
     deviceFunctions->vkCmdDraw(commandBuffer, impl.gridVertexCount, 1, 0, 0);
 
     deviceFunctions->vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, impl.meshPipeline);
@@ -587,11 +1028,12 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
         if (!object.visible || object.type != m3d::ObjectType::Mesh || !object.meshResource) continue;
         const auto mesh = impl.meshCache.find(*object.meshResource);
         if (mesh == impl.meshCache.end()) continue;
-        const m3d::Mat4 mvp = m3d::multiply(viewProjection_, object.worldTransform);
-        const std::array<float, 4> color = object.selected
-            ? std::array<float, 4>{0.93F, 0.55F, 0.18F, 1.0F}
-            : std::array<float, 4>{0.62F, 0.66F, 0.72F, 1.0F};
-        const MeshPushConstants push{mvp, color};
+        const MeshPushConstants push{
+            m3d::multiply(viewProjection_, object.worldTransform),
+            object.selected
+                ? std::array<float, 4>{0.93F, 0.55F, 0.18F, 1.0F}
+                : std::array<float, 4>{0.62F, 0.66F, 0.72F, 1.0F},
+        };
         deviceFunctions->vkCmdPushConstants(commandBuffer, impl.meshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
                                             0, static_cast<std::uint32_t>(sizeof(push)), &push);
         deviceFunctions->vkCmdBindVertexBuffers(commandBuffer, 0, 1, &mesh->second.vertex.buffer, &zeroOffset);
