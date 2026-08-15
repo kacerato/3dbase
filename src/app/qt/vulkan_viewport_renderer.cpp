@@ -191,7 +191,7 @@ struct PipelineCommonState final {
     std::array<VkDynamicState, 2> dynamicStates{};
     VkPipelineDynamicStateCreateInfo dynamic{};
 
-    PipelineCommonState() {
+    explicit PipelineCommonState(bool depthEnabled) {
         viewport = vkInfo<VkPipelineViewportStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO);
         viewport.viewportCount = 1;
         viewport.scissorCount = 1;
@@ -206,8 +206,8 @@ struct PipelineCommonState final {
         multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
         depthStencil = vkInfo<VkPipelineDepthStencilStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO);
-        depthStencil.depthTestEnable = VK_FALSE;
-        depthStencil.depthWriteEnable = VK_FALSE;
+        depthStencil.depthTestEnable = depthEnabled ? VK_TRUE : VK_FALSE;
+        depthStencil.depthWriteEnable = depthEnabled ? VK_TRUE : VK_FALSE;
         depthStencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 
         blendAttachment = opaqueBlendState();
@@ -319,7 +319,7 @@ bool createLinePipeline(VulkanViewportRenderer::Impl& impl) {
 
     auto assembly = vkInfo<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);
     assembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
-    PipelineCommonState common;
+    PipelineCommonState common(false);
 
     auto pipeline = vkInfo<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
     pipeline.stageCount = static_cast<std::uint32_t>(stages.size());
@@ -396,7 +396,7 @@ bool createMeshPipeline(VulkanViewportRenderer::Impl& impl) {
 
     auto assembly = vkInfo<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);
     assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    PipelineCommonState common;
+    PipelineCommonState common(true);
 
     auto pipeline = vkInfo<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
     pipeline.stageCount = static_cast<std::uint32_t>(stages.size());
@@ -537,13 +537,17 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
     const QRect drawArea = viewportPixels_.intersected(QRect(QPoint(0, 0), framebufferSize));
     if (drawArea.isEmpty()) return stats;
 
-    VkClearAttachment clearAttachment{};
-    clearAttachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    clearAttachment.colorAttachment = 0;
-    clearAttachment.clearValue.color.float32[0] = 0.025F;
-    clearAttachment.clearValue.color.float32[1] = 0.032F;
-    clearAttachment.clearValue.color.float32[2] = 0.045F;
-    clearAttachment.clearValue.color.float32[3] = 1.0F;
+    std::array<VkClearAttachment, 2> clearAttachments{};
+    clearAttachments[0].aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    clearAttachments[0].colorAttachment = 0;
+    clearAttachments[0].clearValue.color.float32[0] = 0.025F;
+    clearAttachments[0].clearValue.color.float32[1] = 0.032F;
+    clearAttachments[0].clearValue.color.float32[2] = 0.045F;
+    clearAttachments[0].clearValue.color.float32[3] = 1.0F;
+    clearAttachments[1].aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    clearAttachments[1].clearValue.depthStencil.depth = 1.0F;
+    clearAttachments[1].clearValue.depthStencil.stencil = 0;
+
     VkClearRect clearRect{};
     clearRect.rect.offset.x = drawArea.x();
     clearRect.rect.offset.y = drawArea.y();
@@ -560,7 +564,9 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
         return stats;
     }
     const VkCommandBuffer commandBuffer = *commandBufferHandle;
-    deviceFunctions->vkCmdClearAttachments(commandBuffer, 1, &clearAttachment, 1, &clearRect);
+    deviceFunctions->vkCmdClearAttachments(commandBuffer,
+                                            static_cast<std::uint32_t>(clearAttachments.size()),
+                                            clearAttachments.data(), 1, &clearRect);
 
     VkViewport viewport{};
     viewport.x = static_cast<float>(drawArea.x());
