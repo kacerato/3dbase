@@ -1,14 +1,20 @@
 #pragma once
 
+#include "mobile3d/render/viewport_camera.hpp"
+
 #include <QMetaObject>
 #include <QObject>
+#include <QPointF>
 #include <QPointer>
 #include <QQuickItem>
 #include <QString>
 #include <QtQml/qqmlregistration.h>
 
 class EditorController;
+class QMouseEvent;
 class QQuickWindow;
+class QTouchEvent;
+class QWheelEvent;
 class VulkanViewportRenderer;
 
 class VulkanViewport : public QQuickItem {
@@ -18,6 +24,8 @@ class VulkanViewport : public QQuickItem {
     Q_PROPERTY(QObject* controller READ controller WRITE setController NOTIFY controllerChanged)
     Q_PROPERTY(bool vulkanActive READ vulkanActive NOTIFY backendChanged)
     Q_PROPERTY(QString backendName READ backendName NOTIFY backendChanged)
+    Q_PROPERTY(QString projectionName READ projectionName NOTIFY cameraChanged)
+    Q_PROPERTY(double cameraDistance READ cameraDistance NOTIFY cameraChanged)
 
 public:
     explicit VulkanViewport(QQuickItem* parent = nullptr);
@@ -28,13 +36,26 @@ public:
 
     [[nodiscard]] bool vulkanActive() const noexcept { return vulkanActive_; }
     [[nodiscard]] QString backendName() const { return backendName_; }
+    [[nodiscard]] QString projectionName() const;
+    [[nodiscard]] double cameraDistance() const noexcept {
+        return static_cast<double>(camera_.distance());
+    }
+
+    Q_INVOKABLE void toggleProjection();
+    Q_INVOKABLE void resetCamera();
 
 signals:
     void controllerChanged();
     void backendChanged();
+    void cameraChanged();
 
 protected:
     void releaseResources() override;
+    void mousePressEvent(QMouseEvent* event) override;
+    void mouseMoveEvent(QMouseEvent* event) override;
+    void mouseReleaseEvent(QMouseEvent* event) override;
+    void wheelEvent(QWheelEvent* event) override;
+    void touchEvent(QTouchEvent* event) override;
 
 private:
     void handleWindowChanged(QQuickWindow* window);
@@ -42,12 +63,22 @@ private:
     void cleanup();
     void recordVulkanCommands();
     void updateBackendState(QQuickWindow* window);
+    void orbitByPixels(QPointF delta);
+    void panByPixels(QPointF delta);
+    [[nodiscard]] float worldUnitsPerPixel() const noexcept;
+    void cameraMutated();
 
     QPointer<EditorController> controller_;
     QPointer<QQuickWindow> connectedWindow_;
     VulkanViewportRenderer* renderer_{nullptr};
     QMetaObject::Connection controllerProjectConnection_;
     QMetaObject::Connection controllerSelectionConnection_;
+    m3d::ViewportCamera camera_;
+    QPointF lastMousePosition_;
+    QPointF lastTouchCentroid_;
+    float lastTouchSpan_{0.0F};
+    int lastTouchPointCount_{0};
+    Qt::MouseButton navigationButton_{Qt::NoButton};
     bool vulkanActive_{false};
     QString backendName_{QStringLiteral("Unavailable")};
 };

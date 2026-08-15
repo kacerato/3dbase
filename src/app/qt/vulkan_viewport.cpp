@@ -2,12 +2,16 @@
 
 #include "editor_controller.hpp"
 
+#include <QEvent>
+#include <QMouseEvent>
 #include <QQuickWindow>
 #include <QRect>
 #include <QRectF>
 #include <QSGRendererInterface>
+#include <QTouchEvent>
 #include <QVulkanDeviceFunctions>
 #include <QVulkanInstance>
+#include <QWheelEvent>
 
 #include <algorithm>
 #include <cmath>
@@ -15,6 +19,10 @@
 #include <utility>
 
 namespace {
+
+constexpr float kOrbitRadiansPerPixel = 0.006F;
+constexpr float kWheelZoomExponentPerUnit = 0.0015F;
+constexpr float kDegreesToRadians = 0.01745329251994329577F;
 
 QString graphicsApiName(QSGRendererInterface::GraphicsApi api) {
     switch (api) {
@@ -31,13 +39,34 @@ QString graphicsApiName(QSGRendererInterface::GraphicsApi api) {
     return QStringLiteral("Unknown");
 }
 
+[[nodiscard]] QPointF touchCentroid(const QList<QEventPoint>& points) {
+    if (points.isEmpty()) {
+        return {};
+    }
+    QPointF sum;
+    for (const auto& point : points) {
+        sum += point.position();
+    }
+    return sum / static_cast<qreal>(points.size());
+}
+
+[[nodiscard]] float touchSpan(const QList<QEventPoint>& points) {
+    if (points.size() < 2) {
+        return 0.0F;
+    }
+    const QPointF delta = points.at(1).position() - points.at(0).position();
+    return std::hypot(static_cast<float>(delta.x()), static_cast<float>(delta.y()));
+}
+
 } // namespace
 
 class VulkanViewportRenderer final {
 public:
-    void synchronize(QRect viewportPixels, m3d::RenderSceneSnapshot snapshot) {
+    void synchronize(QRect viewportPixels, m3d::RenderSceneSnapshot snapshot,
+                     m3d::Mat4 viewProjection) {
         viewportPixels_ = viewportPixels;
         snapshot_ = std::move(snapshot);
+        viewProjection_ = viewProjection;
     }
 
     void record(QQuickWindow* window) {
@@ -81,11 +110,12 @@ public:
                                                   return object.selected;
                                               });
         const float objectLift = std::min(static_cast<float>(snapshot_.size()) * 0.003F, 0.035F);
+        const float cameraLift = std::min(std::abs(viewProjection_.at(0, 0)) * 0.002F, 0.015F);
 
         VkClearAttachment clearAttachment{};
         clearAttachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
         clearAttachment.colorAttachment = 0;
-        clearAttachment.clearValue.color.float32[0] = 0.018F;
+        clearAttachment.clearValue.color.float32[0] = 0.018F + cameraLift;
         clearAttachment.clearValue.color.float32[1] = 0.026F + objectLift;
         clearAttachment.clearValue.color.float32[2] = (hasSelection ? 0.105F : 0.058F) + objectLift;
         clearAttachment.clearValue.color.float32[3] = 1.0F;
@@ -104,11 +134,14 @@ public:
 private:
     QRect viewportPixels_;
     m3d::RenderSceneSnapshot snapshot_;
+    m3d::Mat4 viewProjection_{};
 };
 
 VulkanViewport::VulkanViewport(QQuickItem* parent)
     : QQuickItem(parent) {
     setFlag(ItemHasContents, false);
+    setAcceptTouchEvents(true);
+    setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton | Qt::RightButton);
     connect(this, &QQuickItem::windowChanged, this, &VulkanViewport::handleWindowChanged);
 }
 
@@ -148,9 +181,104 @@ void VulkanViewport::setController(QObject* controller) {
     update();
 }
 
+QString VulkanViewport::projectionName() const {
+    return camera_.projection() == m3d::CameraProjection::Perspective
+        ? QStringLiteral("Perspective")
+        : QStringLiteral("Orthographic");
+}
+
+void VulkanViewport::toggleProjection() {
+    camera_.setProjection(camera_.projection() == m3d::CameraProjection::Perspective
+                              ? m3d::CameraProjection::Orthographic
+                              : m3d::CameraProjection::Perspective);
+    cameraMutated();
+}
+
+void VulkanViewport::resetCamera() {
+    camera_ = m3d::ViewportCamera{};
+    cameraMutated();
+}
+
 void VulkanViewport::releaseResources() {
     // GPU/device-owned state is released from sceneGraphInvalidated() on the render
     // thread. This hook intentionally does not introduce GUI-thread Vulkan access.
+}
+
+void VulkanViewport::mousePressEvent(QMouseEvent* event) {
+    navigationButton_ = event->button();
+    lastMousePosition_ = event->position();
+    event->accept();
+}
+
+void VulkanViewport::mouseMoveEvent(QMouseEvent* event) {
+    if (navigationButton_ == Qt::NoButton) {
+        event->ignore();
+        return;
+    }
+
+    const QPointF delta = event->position() - lastMousePosition_;
+    lastMousePosition_ = event->position();
+    if (navigationButton_ == Qt::LeftButton) {
+        orbitByPixels(delta);
+    } else {
+        panByPixels(delta);
+    }
+    event->accept();
+}
+
+void VulkanViewport::mouseReleaseEvent(QMouseEvent* event) {
+    navigationButton_ = Qt::NoButton;
+    event->accept();
+}
+
+void VulkanViewport::wheelEvent(QWheelEvent* event) {
+    const int wheelUnits = event->angleDelta().y();
+    if (wheelUnits == 0) {
+        event->ignore();
+        return;
+    }
+    const float factor = std::exp(static_cast<float>(wheelUnits) * kWheelZoomExponentPerUnit);
+    camera_.zoom(factor);
+    cameraMutated();
+    event->accept();
+}
+
+void VulkanViewport::touchEvent(QTouchEvent* event) {
+    const auto points = event->points();
+    const int pointCount = points.size();
+
+    if (event->type() == QEvent::TouchEnd || event->type() == QEvent::TouchCancel || pointCount == 0) {
+        lastTouchPointCount_ = 0;
+        lastTouchSpan_ = 0.0F;
+        lastTouchCentroid_ = {};
+        event->accept();
+        return;
+    }
+
+    const QPointF centroid = touchCentroid(points);
+    const float span = touchSpan(points);
+    if (event->type() == QEvent::TouchBegin || pointCount != lastTouchPointCount_) {
+        lastTouchPointCount_ = pointCount;
+        lastTouchCentroid_ = centroid;
+        lastTouchSpan_ = span;
+        event->accept();
+        return;
+    }
+
+    if (pointCount == 1) {
+        orbitByPixels(centroid - lastTouchCentroid_);
+    } else {
+        panByPixels(centroid - lastTouchCentroid_);
+        if (lastTouchSpan_ > 1.0F && span > 1.0F) {
+            camera_.zoom(span / lastTouchSpan_);
+            cameraMutated();
+        }
+    }
+
+    lastTouchCentroid_ = centroid;
+    lastTouchSpan_ = span;
+    lastTouchPointCount_ = pointCount;
+    event->accept();
 }
 
 void VulkanViewport::handleWindowChanged(QQuickWindow* window) {
@@ -202,7 +330,10 @@ void VulkanViewport::sync() {
     if (controller_) {
         snapshot = controller_->renderSnapshot();
     }
-    renderer_->synchronize(viewportPixels, std::move(snapshot));
+    const float aspect = pixelHeight > 0
+        ? static_cast<float>(pixelWidth) / static_cast<float>(pixelHeight)
+        : 1.0F;
+    renderer_->synchronize(viewportPixels, std::move(snapshot), camera_.viewProjectionMatrix(aspect));
 }
 
 void VulkanViewport::cleanup() {
@@ -228,4 +359,32 @@ void VulkanViewport::updateBackendState(QQuickWindow* window) {
     vulkanActive_ = isVulkan;
     backendName_ = name;
     emit backendChanged();
+}
+
+void VulkanViewport::orbitByPixels(QPointF delta) {
+    camera_.orbit(-static_cast<float>(delta.x()) * kOrbitRadiansPerPixel,
+                  -static_cast<float>(delta.y()) * kOrbitRadiansPerPixel);
+    cameraMutated();
+}
+
+void VulkanViewport::panByPixels(QPointF delta) {
+    const float units = worldUnitsPerPixel();
+    camera_.pan(-static_cast<float>(delta.x()) * units,
+                static_cast<float>(delta.y()) * units);
+    cameraMutated();
+}
+
+float VulkanViewport::worldUnitsPerPixel() const noexcept {
+    const float viewportHeight = std::max(static_cast<float>(height()), 1.0F);
+    if (camera_.projection() == m3d::CameraProjection::Orthographic) {
+        return camera_.orthographicHeight() / viewportHeight;
+    }
+    const float fovRadians = camera_.perspectiveFovDegrees() * kDegreesToRadians;
+    const float visibleHeight = 2.0F * camera_.distance() * std::tan(fovRadians * 0.5F);
+    return visibleHeight / viewportHeight;
+}
+
+void VulkanViewport::cameraMutated() {
+    emit cameraChanged();
+    update();
 }

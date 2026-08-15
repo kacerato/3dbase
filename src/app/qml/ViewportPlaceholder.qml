@@ -14,7 +14,8 @@ Rectangle {
 
     VulkanViewport {
         id: nativeViewport
-        anchors.fill: parent
+        objectName: "nativeVulkanViewport"
+        anchors.fill: root
         controller: root.controller
     }
 
@@ -49,11 +50,29 @@ Rectangle {
         Label {
             width: Math.min(460, root.width - 40)
             text: nativeViewport.vulkanActive
-                  ? "Native Vulkan commands are recording inside this viewport using an immutable render snapshot. Mesh drawing, camera and picking are the next Stage 3 slices."
+                  ? "One finger/left mouse: orbit • two fingers/middle mouse: pan + pinch/wheel: zoom"
                   : "Graphics backend: " + nativeViewport.backendName + ". Android production builds request Vulkan; host smoke tests intentionally keep a software fallback."
             color: "#626b78"
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
+        }
+    }
+
+    Row {
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.margins: 10
+        spacing: 6
+
+        Button {
+            height: 36
+            text: nativeViewport.projectionName
+            onClicked: nativeViewport.toggleProjection()
+        }
+        Button {
+            height: 36
+            text: "Reset view"
+            onClicked: nativeViewport.resetCamera()
         }
     }
 
@@ -74,10 +93,5 @@ Rectangle {
             color: "#9aa3b1"
             font.pixelSize: 11
         }
-    }
-
-    MouseArea {
-        anchors.fill: parent
-        onClicked: root.controller.clearSelection()
     }
 }
