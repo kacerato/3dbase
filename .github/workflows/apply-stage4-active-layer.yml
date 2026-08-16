@@ -11,14 +11,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - run: |
+      - name: Apply Stage 4 integration
+        run: |
           python3 .automation/stage4_active_layer.py
           rm .automation/stage4_active_layer.py
           rm .github/workflows/apply-stage4-active-layer.yml
-      - run: |
+      - name: Configure strict host build
+        run: cmake -S . -B build-stage4 -G Ninja -DMOBILE3D_BUILD_TESTS=ON -DMOBILE3D_BUILD_QT_APP=OFF -DMOBILE3D_WARNINGS_AS_ERRORS=ON
+      - name: Build Stage 4 core
+        run: cmake --build build-stage4 --parallel
+      - name: Test Stage 4 core
+        run: ctest --test-dir build-stage4 --output-on-failure
+      - name: Commit validated Stage 4 integration
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git diff --cached --check
-          git commit -m "integrate active scene layers"
+          git commit -m "complete scene organization vertical slice"
           git push origin HEAD:main
