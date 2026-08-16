@@ -385,58 +385,6 @@ constexpr std::size_t kMaxPipelineCacheBytes = 64U * 1024U * 1024U;
     return directory.filePath(QStringLiteral("vulkan/") + fileName);
 }
 
-bool createPipelineCache(VulkanViewportRenderer::Impl& impl) {
-    impl.pipelineCachePath = pipelineCacheFilePath(impl.functions, impl.physicalDevice);
-    QByteArray initialData;
-    if (!impl.pipelineCachePath.isEmpty()) {
-        QFile file(impl.pipelineCachePath);
-        const qint64 size = file.size();
-        if (size > 0 && static_cast<std::uint64_t>(size) <= kMaxPipelineCacheBytes &&
-            file.open(QIODevice::ReadOnly)) {
-            initialData = file.readAll();
-        }
-    }
-
-    auto info = vkInfo<VkPipelineCacheCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO);
-    if (!initialData.isEmpty()) {
-        info.initialDataSize = static_cast<std::size_t>(initialData.size());
-        info.pInitialData = initialData.constData();
-    }
-    VkResult result = impl.deviceFunctions->vkCreatePipelineCache(
-        impl.device, &info, nullptr, &impl.pipelineCache);
-    if (result != VK_SUCCESS && !initialData.isEmpty()) {
-        info.initialDataSize = 0;
-        info.pInitialData = nullptr;
-        result = impl.deviceFunctions->vkCreatePipelineCache(
-            impl.device, &info, nullptr, &impl.pipelineCache);
-        initialData.clear();
-    }
-    if (result != VK_SUCCESS) return false;
-    impl.pipelineCacheLoaded = !initialData.isEmpty();
-    qInfo() << "Vulkan pipeline cache:" << (impl.pipelineCacheLoaded ? "loaded" : "cold")
-            << impl.pipelineCachePath;
-    return true;
-}
-
-bool persistPipelineCache(VulkanViewportRenderer::Impl& impl) {
-    if (!impl.deviceFunctions || !impl.device || !impl.pipelineCache ||
-        impl.pipelineCachePath.isEmpty()) return false;
-    std::size_t size = 0;
-    if (impl.deviceFunctions->vkGetPipelineCacheData(
-            impl.device, impl.pipelineCache, &size, nullptr) != VK_SUCCESS ||
-        size == 0 || size > kMaxPipelineCacheBytes) return false;
-
-    QByteArray data(static_cast<qsizetype>(size), '\0');
-    std::size_t writtenSize = size;
-    if (impl.deviceFunctions->vkGetPipelineCacheData(
-            impl.device, impl.pipelineCache, &writtenSize, data.data()) != VK_SUCCESS ||
-        writtenSize == 0 || writtenSize > size) return false;
-    data.resize(static_cast<qsizetype>(writtenSize));
-
-    QSaveFile file(impl.pipelineCachePath);
-    if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size()) return false;
-    return file.commit();
-}
 
 struct PipelineCommonState final {
     VkPipelineViewportStateCreateInfo viewport{};
@@ -519,6 +467,59 @@ void VulkanViewportRenderer::requestPick(QPoint viewportPixel) {
 }
 
 namespace {
+
+bool createPipelineCache(VulkanViewportRenderer::Impl& impl) {
+    impl.pipelineCachePath = pipelineCacheFilePath(impl.functions, impl.physicalDevice);
+    QByteArray initialData;
+    if (!impl.pipelineCachePath.isEmpty()) {
+        QFile file(impl.pipelineCachePath);
+        const qint64 size = file.size();
+        if (size > 0 && static_cast<std::uint64_t>(size) <= kMaxPipelineCacheBytes &&
+            file.open(QIODevice::ReadOnly)) {
+            initialData = file.readAll();
+        }
+    }
+
+    auto info = vkInfo<VkPipelineCacheCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO);
+    if (!initialData.isEmpty()) {
+        info.initialDataSize = static_cast<std::size_t>(initialData.size());
+        info.pInitialData = initialData.constData();
+    }
+    VkResult result = impl.deviceFunctions->vkCreatePipelineCache(
+        impl.device, &info, nullptr, &impl.pipelineCache);
+    if (result != VK_SUCCESS && !initialData.isEmpty()) {
+        info.initialDataSize = 0;
+        info.pInitialData = nullptr;
+        result = impl.deviceFunctions->vkCreatePipelineCache(
+            impl.device, &info, nullptr, &impl.pipelineCache);
+        initialData.clear();
+    }
+    if (result != VK_SUCCESS) return false;
+    impl.pipelineCacheLoaded = !initialData.isEmpty();
+    qInfo() << "Vulkan pipeline cache:" << (impl.pipelineCacheLoaded ? "loaded" : "cold")
+            << impl.pipelineCachePath;
+    return true;
+}
+
+bool persistPipelineCache(VulkanViewportRenderer::Impl& impl) {
+    if (!impl.deviceFunctions || !impl.device || !impl.pipelineCache ||
+        impl.pipelineCachePath.isEmpty()) return false;
+    std::size_t size = 0;
+    if (impl.deviceFunctions->vkGetPipelineCacheData(
+            impl.device, impl.pipelineCache, &size, nullptr) != VK_SUCCESS ||
+        size == 0 || size > kMaxPipelineCacheBytes) return false;
+
+    QByteArray data(static_cast<qsizetype>(size), '\0');
+    std::size_t writtenSize = size;
+    if (impl.deviceFunctions->vkGetPipelineCacheData(
+            impl.device, impl.pipelineCache, &writtenSize, data.data()) != VK_SUCCESS ||
+        writtenSize == 0 || writtenSize > size) return false;
+    data.resize(static_cast<qsizetype>(writtenSize));
+
+    QSaveFile file(impl.pipelineCachePath);
+    if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size()) return false;
+    return file.commit();
+}
 
 bool createGridResources(VulkanViewportRenderer::Impl& impl) {
     const auto vertices = makeGridVertices();
