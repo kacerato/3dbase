@@ -26,13 +26,17 @@ constexpr float kEpsilon = 1.0e-7F;
             value.z * inverseLength, value.w * inverseLength};
 }
 
-[[nodiscard]] Quat multiplied(Quat left, Quat right) noexcept {
-    return normalized({
+[[nodiscard]] Quat multipliedRaw(Quat left, Quat right) noexcept {
+    return {
         left.w * right.x + left.x * right.w + left.y * right.z - left.z * right.y,
         left.w * right.y - left.x * right.z + left.y * right.w + left.z * right.x,
         left.w * right.z + left.x * right.y - left.y * right.x + left.z * right.w,
         left.w * right.w - left.x * right.x - left.y * right.y - left.z * right.z,
-    });
+    };
+}
+
+[[nodiscard]] Quat multiplied(Quat left, Quat right) noexcept {
+    return normalized(multipliedRaw(left, right));
 }
 
 [[nodiscard]] Quat conjugated(Quat value) noexcept {
@@ -51,7 +55,7 @@ constexpr float kEpsilon = 1.0e-7F;
 [[nodiscard]] Vec3 rotated(Vec3 value, Quat rotation) noexcept {
     const Quat q = normalized(rotation);
     const Quat vector{value.x, value.y, value.z, 0.0F};
-    const Quat result = multiplied(multiplied(q, vector), conjugated(q));
+    const Quat result = multipliedRaw(multipliedRaw(q, vector), conjugated(q));
     return {result.x, result.y, result.z};
 }
 
