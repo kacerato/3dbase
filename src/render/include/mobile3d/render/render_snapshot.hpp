@@ -27,6 +27,7 @@ struct RenderObjectSnapshot final {
     ObjectType type{ObjectType::Empty};
     Transform localTransform{};
     Mat4 worldTransform{Mat4::identity()};
+    Quat worldRotation{};
     std::optional<ObjectId> parent{};
     std::optional<ResourceId> meshResource{};
     bool visible{true};
