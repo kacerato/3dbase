@@ -45,13 +45,97 @@ bool writeAtomic(const std::filesystem::path& path, const std::string& content, 
     return true;
 }
 
+bool readEditableSnapshot(std::istream& input, EditableMeshSnapshot& snapshot, ResourceId& resourceId,
+                          std::string* error) {
+    std::string record;
+    std::string resourceText;
+    std::size_t vertexCount = 0;
+    std::size_t halfEdgeCount = 0;
+    std::size_t edgeCount = 0;
+    std::size_t faceCount = 0;
+    if (!(input >> record >> std::quoted(resourceText) >> vertexCount >> halfEdgeCount >> edgeCount >> faceCount)
+        || record != "authoring") {
+        if (error) *error = "Malformed editable mesh authoring header";
+        return false;
+    }
+    const auto parsedResource = ResourceId::fromString(resourceText);
+    if (!parsedResource || parsedResource->isNull()) {
+        if (error) *error = "Invalid editable mesh resource id";
+        return false;
+    }
+    resourceId = *parsedResource;
+
+    snapshot.vertices.reserve(vertexCount);
+    snapshot.halfEdges.reserve(halfEdgeCount);
+    snapshot.edges.reserve(edgeCount);
+    snapshot.faces.reserve(faceCount);
+
+    for (std::size_t index = 0; index < vertexCount; ++index) {
+        std::string key;
+        std::uint32_t id = 0;
+        std::uint32_t outgoing = 0;
+        EditableVertex vertex;
+        if (!(input >> key >> id >> vertex.position.x >> vertex.position.y >> vertex.position.z >> outgoing)
+            || key != "a_vertex") {
+            if (error) *error = "Malformed editable vertex record";
+            return false;
+        }
+        vertex.id = EditableVertexId{id};
+        vertex.outgoing = EditableHalfEdgeId{outgoing};
+        snapshot.vertices.push_back(vertex);
+    }
+
+    for (std::size_t index = 0; index < halfEdgeCount; ++index) {
+        std::string key;
+        std::uint32_t id = 0;
+        std::uint32_t origin = 0;
+        std::uint32_t next = 0;
+        std::uint32_t twin = 0;
+        std::uint32_t edge = 0;
+        std::uint32_t face = 0;
+        if (!(input >> key >> id >> origin >> next >> twin >> edge >> face) || key != "a_halfedge") {
+            if (error) *error = "Malformed editable half-edge record";
+            return false;
+        }
+        snapshot.halfEdges.push_back(EditableHalfEdge{
+            EditableHalfEdgeId{id}, EditableVertexId{origin}, EditableHalfEdgeId{next},
+            EditableHalfEdgeId{twin}, EditableEdgeId{edge}, EditableFaceId{face}});
+    }
+
+    for (std::size_t index = 0; index < edgeCount; ++index) {
+        std::string key;
+        std::uint32_t id = 0;
+        std::uint32_t halfEdge = 0;
+        if (!(input >> key >> id >> halfEdge) || key != "a_edge") {
+            if (error) *error = "Malformed editable edge record";
+            return false;
+        }
+        snapshot.edges.push_back(EditableEdge{EditableEdgeId{id}, EditableHalfEdgeId{halfEdge}});
+    }
+
+    for (std::size_t index = 0; index < faceCount; ++index) {
+        std::string key;
+        std::uint32_t id = 0;
+        std::uint32_t halfEdge = 0;
+        if (!(input >> key >> id >> halfEdge) || key != "a_face") {
+            if (error) *error = "Malformed editable face record";
+            return false;
+        }
+        snapshot.faces.push_back(EditableFace{EditableFaceId{id}, EditableHalfEdgeId{halfEdge}});
+    }
+    return true;
+}
+
 } // namespace
 
 bool SceneSerializer::write(const std::filesystem::path& path, const Scene& scene, std::string* error) {
     std::ostringstream output;
     output << "M3DSCENE " << currentFormatVersion << '\n';
-    output << "mesh_count " << scene.meshResourceCount() << '\n';
-    for (const auto& mesh : scene.meshResources()) {
+
+    auto meshes = scene.meshResources();
+    output << "mesh_count " << meshes.size() << '\n';
+    for (auto& mesh : meshes) {
+        if (mesh.authoring && !mesh.rebuildFromAuthoring(error)) return false;
         output << "mesh " << std::quoted(mesh.id.toString()) << ' ' << std::quoted(mesh.name) << ' '
                << mesh.vertices.size() << ' ' << mesh.indices.size() << '\n';
         for (const auto& vertex : mesh.vertices) {
@@ -61,6 +145,33 @@ bool SceneSerializer::write(const std::filesystem::path& path, const Scene& scen
         for (std::size_t index = 0; index < mesh.indices.size(); index += 3U) {
             output << "triangle " << mesh.indices[index] << ' ' << mesh.indices[index + 1U] << ' '
                    << mesh.indices[index + 2U] << '\n';
+        }
+    }
+
+    std::size_t authoringCount = 0;
+    for (const auto& mesh : meshes) if (mesh.authoring) ++authoringCount;
+    output << "authoring_count " << authoringCount << '\n';
+    for (const auto& mesh : meshes) {
+        if (!mesh.authoring) continue;
+        const auto snapshot = mesh.authoring->snapshot();
+        output << "authoring " << std::quoted(mesh.id.toString()) << ' '
+               << snapshot.vertices.size() << ' ' << snapshot.halfEdges.size() << ' '
+               << snapshot.edges.size() << ' ' << snapshot.faces.size() << '\n';
+        for (const auto& vertex : snapshot.vertices) {
+            output << "a_vertex " << vertex.id.value << ' '
+                   << vertex.position.x << ' ' << vertex.position.y << ' ' << vertex.position.z << ' '
+                   << vertex.outgoing.value << '\n';
+        }
+        for (const auto& halfEdge : snapshot.halfEdges) {
+            output << "a_halfedge " << halfEdge.id.value << ' ' << halfEdge.origin.value << ' '
+                   << halfEdge.next.value << ' ' << halfEdge.twin.value << ' ' << halfEdge.edge.value << ' '
+                   << halfEdge.face.value << '\n';
+        }
+        for (const auto& edge : snapshot.edges) {
+            output << "a_edge " << edge.id.value << ' ' << edge.halfEdge.value << '\n';
+        }
+        for (const auto& face : snapshot.faces) {
+            output << "a_face " << face.id.value << ' ' << face.halfEdge.value << '\n';
         }
     }
 
@@ -181,6 +292,29 @@ std::optional<Scene> SceneSerializer::read(const std::filesystem::path& path, st
                 if (error) *error = "Invalid or duplicate mesh resource";
                 return std::nullopt;
             }
+        }
+    }
+
+    if (version >= 4) {
+        std::string authoringCountKey;
+        std::size_t authoringCount = 0;
+        if (!(input >> authoringCountKey >> authoringCount) || authoringCountKey != "authoring_count") {
+            if (error) *error = "Invalid editable mesh authoring count";
+            return std::nullopt;
+        }
+        for (std::size_t index = 0; index < authoringCount; ++index) {
+            EditableMeshSnapshot snapshot;
+            ResourceId resourceId{};
+            if (!readEditableSnapshot(input, snapshot, resourceId, error)) return std::nullopt;
+            auto* resource = scene.findMeshResource(resourceId);
+            if (!resource || resource->authoring) {
+                if (error) *error = "Editable mesh authoring references a missing or duplicate resource";
+                return std::nullopt;
+            }
+            const auto editable = EditableMesh::fromSnapshot(snapshot, error);
+            if (!editable) return std::nullopt;
+            resource->authoring = *editable;
+            if (!resource->rebuildFromAuthoring(error)) return std::nullopt;
         }
     }
 

@@ -1,6 +1,7 @@
 #include "test_harness.hpp"
 
 #include "mobile3d/core/editable_mesh.hpp"
+#include "mobile3d/core/mesh_resource.hpp"
 
 #include <array>
 #include <string>
@@ -24,25 +25,36 @@ TEST_CASE("editable cube preserves quad topology and manifold twins") {
     }
 }
 
-TEST_CASE("editable cube triangulates into validated render geometry") {
-    const auto editable = m3d::EditableMesh::makeCube(2.0F);
-    const auto resourceId = m3d::ResourceId::generate();
+TEST_CASE("editable cube rebuilds validated render geometry") {
+    m3d::MeshResource rendered;
+    rendered.id = m3d::ResourceId::generate();
+    rendered.name = "Editable Cube";
+    rendered.authoring = m3d::EditableMesh::makeCube(2.0F);
     std::string error;
-    const auto rendered = editable.toMeshResource(resourceId, "Editable Cube", &error);
-    REQUIRE(rendered.has_value());
+    REQUIRE(rendered.rebuildFromAuthoring(&error));
     REQUIRE(error.empty());
-    REQUIRE(rendered->id == resourceId);
-    REQUIRE(rendered->vertices.size() == 24U);
-    REQUIRE(rendered->indices.size() == 36U);
-    REQUIRE(rendered->validate(&error));
-    const auto bounds = rendered->bounds();
+    REQUIRE(rendered.vertices.size() == 24U);
+    REQUIRE(rendered.indices.size() == 36U);
+    REQUIRE(rendered.validate(&error));
+    const auto bounds = rendered.bounds();
     REQUIRE(bounds.has_value());
     REQUIRE((bounds->min == m3d::Vec3{-1.0F, -1.0F, -1.0F}));
     REQUIRE((bounds->max == m3d::Vec3{1.0F, 1.0F, 1.0F}));
 }
 
-TEST_CASE("triangle render cube reconstructs welded editable topology") {
-    const auto rendered = m3d::MeshResource::makeCube("Render Cube", 2.0F);
+TEST_CASE("mesh cube keeps authored quads alongside derived render triangles") {
+    const auto resource = m3d::MeshResource::makeCube("Cube", 2.0F);
+    REQUIRE(resource.authoring.has_value());
+    REQUIRE(resource.authoring->vertexCount() == 8U);
+    REQUIRE(resource.authoring->edgeCount() == 12U);
+    REQUIRE(resource.authoring->faceCount() == 6U);
+    REQUIRE(resource.vertices.size() == 24U);
+    REQUIRE(resource.indices.size() == 36U);
+}
+
+TEST_CASE("legacy triangle render cube reconstructs welded editable topology") {
+    auto rendered = m3d::MeshResource::makeCube("Render Cube", 2.0F);
+    rendered.authoring.reset();
     std::string error;
     const auto editable = m3d::EditableMesh::fromMeshResource(rendered, 1.0e-5F, &error);
     REQUIRE(editable.has_value());
@@ -52,6 +64,20 @@ TEST_CASE("triangle render cube reconstructs welded editable topology") {
     REQUIRE(editable->faceCount() == 12U);
     REQUIRE(editable->halfEdgeCount() == 36U);
     REQUIRE(editable->edgeCount() == 18U);
+}
+
+TEST_CASE("editable mesh snapshot round trip preserves every topology id") {
+    const auto original = m3d::EditableMesh::makeCube();
+    const auto snapshot = original.snapshot();
+    std::string error;
+    const auto restored = m3d::EditableMesh::fromSnapshot(snapshot, &error);
+    REQUIRE(restored.has_value());
+    REQUIRE(error.empty());
+    REQUIRE(restored->validate(&error));
+    REQUIRE(restored->snapshot().vertices == snapshot.vertices);
+    REQUIRE(restored->snapshot().halfEdges == snapshot.halfEdges);
+    REQUIRE(restored->snapshot().edges == snapshot.edges);
+    REQUIRE(restored->snapshot().faces == snapshot.faces);
 }
 
 TEST_CASE("editable mesh rejects a third face on an existing manifold edge") {

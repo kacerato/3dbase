@@ -44,8 +44,13 @@ TEST_CASE("project repository creates saves and reopens a versioned project") {
     REQUIRE(reopened->scene.find(cube)->meshResource == resource);
     const auto* reopenedMesh = reopened->scene.findMeshResource(resource);
     REQUIRE(reopenedMesh != nullptr);
-    REQUIRE(reopenedMesh->vertices.size() == 24);
-    REQUIRE(reopenedMesh->indices.size() == 36);
+    REQUIRE(reopenedMesh->vertices.size() == 24U);
+    REQUIRE(reopenedMesh->indices.size() == 36U);
+    REQUIRE(reopenedMesh->authoring.has_value());
+    REQUIRE(reopenedMesh->authoring->vertexCount() == 8U);
+    REQUIRE(reopenedMesh->authoring->edgeCount() == 12U);
+    REQUIRE(reopenedMesh->authoring->halfEdgeCount() == 24U);
+    REQUIRE(reopenedMesh->authoring->faceCount() == 6U);
 
     std::filesystem::remove_all(path);
 }
@@ -73,7 +78,7 @@ TEST_CASE("autosave is independent from the primary scene and recoverable") {
     std::filesystem::remove_all(path);
 }
 
-TEST_CASE("scene format v3 round trips collections layers and remains organization aware") {
+TEST_CASE("scene format v4 round trips collections layers and remains organization aware") {
     const auto root = tempProjectPath();
     std::filesystem::create_directories(root);
     const auto file = root / "organization.m3scene";
@@ -91,8 +96,8 @@ TEST_CASE("scene format v3 round trips collections layers and remains organizati
     REQUIRE(m3d::SceneSerializer::write(file, scene, &error));
     const auto loaded = m3d::SceneSerializer::read(file, &error);
     REQUIRE(loaded.has_value());
-    REQUIRE(loaded->collectionCount() == 1);
-    REQUIRE(loaded->layerCount() == 1);
+    REQUIRE(loaded->collectionCount() == 1U);
+    REQUIRE(loaded->layerCount() == 1U);
     REQUIRE(loaded->findCollection(collection) != nullptr);
     REQUIRE(loaded->findLayer(layer) != nullptr);
     REQUIRE(loaded->findCollection(collection)->objects == std::vector<m3d::ObjectId>{object});

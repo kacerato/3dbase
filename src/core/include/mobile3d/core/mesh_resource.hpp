@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mobile3d/core/editable_mesh.hpp"
 #include "mobile3d/core/id.hpp"
 #include "mobile3d/core/math.hpp"
 
@@ -29,8 +30,12 @@ struct MeshResource final {
     std::string name{"Mesh"};
     std::vector<MeshVertex> vertices;
     std::vector<std::uint32_t> indices;
+    std::optional<EditableMesh> authoring{};
 
     [[nodiscard]] bool validate(std::string* error = nullptr) const;
+    [[nodiscard]] bool rebuildFromAuthoring(std::string* error = nullptr);
+    [[nodiscard]] bool ensureAuthoring(float weldEpsilon = 1.0e-5F,
+                                       std::string* error = nullptr);
     [[nodiscard]] std::optional<Bounds3> bounds() const noexcept;
     [[nodiscard]] static MeshResource makeCube(std::string name = "Cube", float size = 1.0F);
 };

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "mobile3d/core/mesh_resource.hpp"
+#include "mobile3d/core/math.hpp"
 
 #include <compare>
 #include <cstddef>
@@ -13,6 +13,8 @@
 #include <vector>
 
 namespace m3d {
+
+struct MeshResource;
 
 template <typename Tag>
 struct MeshElementId final {
@@ -32,6 +34,7 @@ struct EditableVertex final {
     EditableVertexId id{};
     Vec3 position{};
     EditableHalfEdgeId outgoing{};
+    friend constexpr bool operator==(const EditableVertex&, const EditableVertex&) noexcept = default;
 };
 
 struct EditableHalfEdge final {
@@ -41,16 +44,26 @@ struct EditableHalfEdge final {
     EditableHalfEdgeId twin{};
     EditableEdgeId edge{};
     EditableFaceId face{};
+    friend constexpr bool operator==(const EditableHalfEdge&, const EditableHalfEdge&) noexcept = default;
 };
 
 struct EditableEdge final {
     EditableEdgeId id{};
     EditableHalfEdgeId halfEdge{};
+    friend constexpr bool operator==(const EditableEdge&, const EditableEdge&) noexcept = default;
 };
 
 struct EditableFace final {
     EditableFaceId id{};
     EditableHalfEdgeId halfEdge{};
+    friend constexpr bool operator==(const EditableFace&, const EditableFace&) noexcept = default;
+};
+
+struct EditableMeshSnapshot final {
+    std::vector<EditableVertex> vertices;
+    std::vector<EditableHalfEdge> halfEdges;
+    std::vector<EditableEdge> edges;
+    std::vector<EditableFace> faces;
 };
 
 class EditableMesh final {
@@ -68,6 +81,7 @@ public:
     [[nodiscard]] const EditableFace* findFace(EditableFaceId id) const noexcept;
 
     [[nodiscard]] std::vector<EditableVertex> vertices() const;
+    [[nodiscard]] std::vector<EditableHalfEdge> halfEdges() const;
     [[nodiscard]] std::vector<EditableEdge> edges() const;
     [[nodiscard]] std::vector<EditableFace> faces() const;
     [[nodiscard]] std::vector<EditableVertexId> faceVertices(EditableFaceId face) const;
@@ -78,11 +92,11 @@ public:
     [[nodiscard]] std::size_t faceCount() const noexcept { return faceCount_; }
 
     [[nodiscard]] bool validate(std::string* error = nullptr) const;
+    [[nodiscard]] EditableMeshSnapshot snapshot() const;
+    [[nodiscard]] static std::optional<EditableMesh> fromSnapshot(const EditableMeshSnapshot& snapshot,
+                                                                   std::string* error = nullptr);
 
-    [[nodiscard]] std::optional<MeshResource> toMeshResource(ResourceId resourceId,
-                                                              std::string name,
-                                                              std::string* error = nullptr) const;
-
+    [[nodiscard]] bool writeRenderMesh(MeshResource& output, std::string* error = nullptr) const;
     [[nodiscard]] static EditableMesh makeCube(float size = 1.0F);
     [[nodiscard]] static std::optional<EditableMesh> fromMeshResource(const MeshResource& mesh,
                                                                        float weldEpsilon = 1.0e-5F,

@@ -1,5 +1,7 @@
 #include "mobile3d/core/editable_mesh.hpp"
 
+#include "mobile3d/core/mesh_resource.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -34,6 +36,13 @@ namespace {
     normal.y *= inverseLength;
     normal.z *= inverseLength;
     return normal;
+}
+
+template <typename Element>
+[[nodiscard]] std::uint32_t maximumId(const std::vector<Element>& values) noexcept {
+    std::uint32_t result = 0U;
+    for (const auto& value : values) result = std::max(result, value.id.value);
+    return result;
 }
 
 } // namespace
@@ -183,6 +192,13 @@ std::vector<EditableVertex> EditableMesh::vertices() const {
     std::vector<EditableVertex> result;
     result.reserve(vertexCount_);
     for (const auto& value : vertices_) if (value) result.push_back(*value);
+    return result;
+}
+
+std::vector<EditableHalfEdge> EditableMesh::halfEdges() const {
+    std::vector<EditableHalfEdge> result;
+    result.reserve(halfEdgeCount_);
+    for (const auto& value : halfEdges_) if (value) result.push_back(*value);
     return result;
 }
 
@@ -351,19 +367,76 @@ bool EditableMesh::validate(std::string* error) const {
     return true;
 }
 
-std::optional<MeshResource> EditableMesh::toMeshResource(ResourceId resourceId,
-                                                          std::string name,
-                                                          std::string* error) const {
-    if (name.empty()) {
-        if (error) *error = "Render mesh name cannot be empty";
+EditableMeshSnapshot EditableMesh::snapshot() const {
+    return EditableMeshSnapshot{vertices(), halfEdges(), edges(), faces()};
+}
+
+std::optional<EditableMesh> EditableMesh::fromSnapshot(const EditableMeshSnapshot& snapshotValue,
+                                                        std::string* error) {
+    if (snapshotValue.vertices.empty() || snapshotValue.faces.empty()) {
+        if (error) *error = "Editable mesh snapshot must contain vertices and faces";
         return std::nullopt;
     }
-    if (!validate(error)) return std::nullopt;
 
-    MeshResource result;
-    result.id = resourceId.isNull() ? ResourceId::generate() : resourceId;
-    result.name = std::move(name);
+    EditableMesh result;
+    result.vertices_.resize(static_cast<std::size_t>(maximumId(snapshotValue.vertices)));
+    result.halfEdges_.resize(static_cast<std::size_t>(maximumId(snapshotValue.halfEdges)));
+    result.edges_.resize(static_cast<std::size_t>(maximumId(snapshotValue.edges)));
+    result.faces_.resize(static_cast<std::size_t>(maximumId(snapshotValue.faces)));
 
+    for (const auto& value : snapshotValue.vertices) {
+        if (value.id.isNull()) { if (error) *error = "Editable snapshot contains a null vertex id"; return std::nullopt; }
+        auto& slot = result.vertices_[static_cast<std::size_t>(value.id.value - 1U)];
+        if (slot) { if (error) *error = "Editable snapshot contains a duplicate vertex id"; return std::nullopt; }
+        slot = value;
+        ++result.vertexCount_;
+    }
+    for (const auto& value : snapshotValue.halfEdges) {
+        if (value.id.isNull()) { if (error) *error = "Editable snapshot contains a null half-edge id"; return std::nullopt; }
+        auto& slot = result.halfEdges_[static_cast<std::size_t>(value.id.value - 1U)];
+        if (slot) { if (error) *error = "Editable snapshot contains a duplicate half-edge id"; return std::nullopt; }
+        slot = value;
+        ++result.halfEdgeCount_;
+    }
+    for (const auto& value : snapshotValue.edges) {
+        if (value.id.isNull()) { if (error) *error = "Editable snapshot contains a null edge id"; return std::nullopt; }
+        auto& slot = result.edges_[static_cast<std::size_t>(value.id.value - 1U)];
+        if (slot) { if (error) *error = "Editable snapshot contains a duplicate edge id"; return std::nullopt; }
+        slot = value;
+        ++result.edgeCount_;
+    }
+    for (const auto& value : snapshotValue.faces) {
+        if (value.id.isNull()) { if (error) *error = "Editable snapshot contains a null face id"; return std::nullopt; }
+        auto& slot = result.faces_[static_cast<std::size_t>(value.id.value - 1U)];
+        if (slot) { if (error) *error = "Editable snapshot contains a duplicate face id"; return std::nullopt; }
+        slot = value;
+        ++result.faceCount_;
+    }
+
+    for (const auto& halfEdge : snapshotValue.halfEdges) {
+        const auto* next = result.findHalfEdge(halfEdge.next);
+        if (!next) { if (error) *error = "Editable snapshot half-edge has an invalid next reference"; return std::nullopt; }
+        const DirectedEdgeKey key{halfEdge.origin.value, next->origin.value};
+        if (!result.directedEdges_.emplace(key, halfEdge.id).second) {
+            if (error) *error = "Editable snapshot contains duplicate directed edges";
+            return std::nullopt;
+        }
+    }
+
+    if (!result.validate(error)) return std::nullopt;
+    return result;
+}
+
+bool EditableMesh::writeRenderMesh(MeshResource& output, std::string* error) const {
+    if (output.name.empty()) {
+        if (error) *error = "Render mesh name cannot be empty";
+        return false;
+    }
+    if (!validate(error)) return false;
+    if (output.id.isNull()) output.id = ResourceId::generate();
+
+    std::vector<MeshVertex> verticesOut;
+    std::vector<std::uint32_t> indicesOut;
     for (const auto& face : faces()) {
         const auto ids = faceVertices(face.id);
         std::vector<Vec3> positions;
@@ -372,7 +445,7 @@ std::optional<MeshResource> EditableMesh::toMeshResource(ResourceId resourceId,
             const auto* vertex = findVertex(id);
             if (!vertex) {
                 if (error) *error = "Editable face references a missing vertex during triangulation";
-                return std::nullopt;
+                return false;
             }
             positions.push_back(vertex->position);
         }
@@ -380,26 +453,28 @@ std::optional<MeshResource> EditableMesh::toMeshResource(ResourceId resourceId,
         const auto normal = newellNormal(positions);
         if (!normal) {
             if (error) *error = "Editable face is degenerate and cannot be triangulated";
-            return std::nullopt;
+            return false;
         }
 
-        const std::size_t base = result.vertices.size();
+        const std::size_t base = verticesOut.size();
         if (base + positions.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
             if (error) *error = "Editable mesh exceeds 32-bit render index capacity";
-            return std::nullopt;
+            return false;
         }
-        for (const auto position : positions) result.vertices.push_back(MeshVertex{position, *normal});
+        for (const auto position : positions) verticesOut.push_back(MeshVertex{position, *normal});
 
         const auto baseIndex = static_cast<std::uint32_t>(base);
         for (std::size_t i = 1U; i + 1U < positions.size(); ++i) {
-            result.indices.push_back(baseIndex);
-            result.indices.push_back(baseIndex + static_cast<std::uint32_t>(i));
-            result.indices.push_back(baseIndex + static_cast<std::uint32_t>(i + 1U));
+            indicesOut.push_back(baseIndex);
+            indicesOut.push_back(baseIndex + static_cast<std::uint32_t>(i));
+            indicesOut.push_back(baseIndex + static_cast<std::uint32_t>(i + 1U));
         }
     }
 
-    if (!result.validate(error)) return std::nullopt;
-    return result;
+    output.vertices = std::move(verticesOut);
+    output.indices = std::move(indicesOut);
+    if (error) error->clear();
+    return true;
 }
 
 EditableMesh EditableMesh::makeCube(float size) {
@@ -416,7 +491,7 @@ EditableMesh EditableMesh::makeCube(float size) {
         mesh.addVertex({-half,  half,  half}),
     };
 
-    const std::array<std::array<EditableVertexId, 4>, 6> faces{{
+    const std::array<std::array<EditableVertexId, 4>, 6> facesValue{{
         {v[4], v[5], v[6], v[7]},
         {v[1], v[0], v[3], v[2]},
         {v[0], v[4], v[7], v[3]},
@@ -424,13 +499,17 @@ EditableMesh EditableMesh::makeCube(float size) {
         {v[7], v[6], v[2], v[3]},
         {v[0], v[1], v[5], v[4]},
     }};
-    for (const auto& face : faces) (void)mesh.addFace(face);
+    for (const auto& face : facesValue) (void)mesh.addFace(face);
     return mesh;
 }
 
 std::optional<EditableMesh> EditableMesh::fromMeshResource(const MeshResource& mesh,
                                                             float weldEpsilon,
                                                             std::string* error) {
+    if (mesh.authoring) {
+        if (!mesh.authoring->validate(error)) return std::nullopt;
+        return *mesh.authoring;
+    }
     if (!mesh.validate(error)) return std::nullopt;
     if (!std::isfinite(weldEpsilon) || weldEpsilon <= 0.0F) {
         if (error) *error = "Editable mesh weld epsilon must be finite and positive";

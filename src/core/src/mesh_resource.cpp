@@ -42,14 +42,31 @@ bool MeshResource::validate(std::string* error) const {
             return false;
         }
     }
+    if (authoring && !authoring->validate(error)) return false;
+    if (error) error->clear();
+    return true;
+}
+
+bool MeshResource::rebuildFromAuthoring(std::string* error) {
+    if (!authoring) {
+        if (error) *error = "Mesh resource has no authoring topology";
+        return false;
+    }
+    if (!authoring->writeRenderMesh(*this, error)) return false;
+    return validate(error);
+}
+
+bool MeshResource::ensureAuthoring(float weldEpsilon, std::string* error) {
+    if (authoring) return authoring->validate(error);
+    const auto editable = EditableMesh::fromMeshResource(*this, weldEpsilon, error);
+    if (!editable) return false;
+    authoring = *editable;
     if (error) error->clear();
     return true;
 }
 
 std::optional<Bounds3> MeshResource::bounds() const noexcept {
-    if (vertices.empty()) {
-        return std::nullopt;
-    }
+    if (vertices.empty()) return std::nullopt;
     Bounds3 result{vertices.front().position, vertices.front().position};
     for (const auto& vertex : vertices) {
         result.min.x = std::min(result.min.x, vertex.position.x);
@@ -62,28 +79,16 @@ std::optional<Bounds3> MeshResource::bounds() const noexcept {
     return result;
 }
 
-MeshResource MeshResource::makeCube(std::string name, float size) {
+MeshResource MeshResource::makeCube(std::string nameValue, float size) {
     MeshResource mesh;
     mesh.id = ResourceId::generate();
-    mesh.name = std::move(name);
-    const float h = std::max(size, 0.0001F) * 0.5F;
-
-    const auto addFace = [&mesh](Vec3 a, Vec3 b, Vec3 c, Vec3 d, Vec3 normal) {
-        const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
-        mesh.vertices.push_back({a, normal});
-        mesh.vertices.push_back({b, normal});
-        mesh.vertices.push_back({c, normal});
-        mesh.vertices.push_back({d, normal});
-        mesh.indices.insert(mesh.indices.end(), {base, base + 1U, base + 2U,
-                                                  base, base + 2U, base + 3U});
-    };
-
-    addFace({-h, -h, h}, {h, -h, h}, {h, h, h}, {-h, h, h}, {0.0F, 0.0F, 1.0F});
-    addFace({h, -h, -h}, {-h, -h, -h}, {-h, h, -h}, {h, h, -h}, {0.0F, 0.0F, -1.0F});
-    addFace({-h, -h, -h}, {-h, -h, h}, {-h, h, h}, {-h, h, -h}, {-1.0F, 0.0F, 0.0F});
-    addFace({h, -h, h}, {h, -h, -h}, {h, h, -h}, {h, h, h}, {1.0F, 0.0F, 0.0F});
-    addFace({-h, h, h}, {h, h, h}, {h, h, -h}, {-h, h, -h}, {0.0F, 1.0F, 0.0F});
-    addFace({-h, -h, -h}, {h, -h, -h}, {h, -h, h}, {-h, -h, h}, {0.0F, -1.0F, 0.0F});
+    mesh.name = std::move(nameValue);
+    mesh.authoring = EditableMesh::makeCube(size);
+    std::string error;
+    if (!mesh.rebuildFromAuthoring(&error)) {
+        mesh.vertices.clear();
+        mesh.indices.clear();
+    }
     return mesh;
 }
 
