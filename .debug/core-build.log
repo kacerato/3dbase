@@ -1,0 +1,52 @@
+-- The CXX compiler identification is GNU 13.3.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Configuring done (1.8s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/runner/work/3dbase/3dbase/build-debug
+[1/31] Building CXX object src/core/CMakeFiles/mobile3d_core.dir/src/mesh_resource.cpp.o
+[2/31] Building CXX object src/core/CMakeFiles/mobile3d_core.dir/src/id.cpp.o
+[3/31] Building CXX object src/core/CMakeFiles/mobile3d_core.dir/src/command_stack.cpp.o
+[4/31] Building CXX object src/core/CMakeFiles/mobile3d_core.dir/src/composite_command.cpp.o
+[5/31] Building CXX object src/core/CMakeFiles/mobile3d_core.dir/src/selection_model.cpp.o
+[6/31] Building CXX object src/core/CMakeFiles/mobile3d_core.dir/src/scene.cpp.o
+[7/31] Building CXX object src/core/CMakeFiles/mobile3d_core.dir/src/project_manifest.cpp.o
+[8/31] Building CXX object src/core/CMakeFiles/mobile3d_core.dir/src/commands/object_commands.cpp.o
+[9/31] Building CXX object src/core/CMakeFiles/mobile3d_core.dir/src/scene_serializer.cpp.o
+[10/31] Building CXX object src/core/CMakeFiles/mobile3d_core.dir/src/project_repository.cpp.o
+[11/31] Building CXX object src/editor/CMakeFiles/mobile3d_editor.dir/src/editor_session.cpp.o
+[12/31] Building CXX object src/editor/CMakeFiles/mobile3d_editor.dir/src/transform_gizmo.cpp.o
+[13/31] Building CXX object src/editor/CMakeFiles/mobile3d_editor.dir/src/transform_manipulator.cpp.o
+[14/31] Building CXX object src/render/CMakeFiles/mobile3d_render.dir/src/render_math.cpp.o
+[15/31] Building CXX object src/render/CMakeFiles/mobile3d_render.dir/src/render_snapshot.cpp.o
+[16/31] Building CXX object src/render/CMakeFiles/mobile3d_render.dir/src/viewport_camera.cpp.o
+[17/31] Building CXX object tests/CMakeFiles/mobile3d_core_tests.dir/test_main.cpp.o
+[18/31] Building CXX object tests/CMakeFiles/mobile3d_core_tests.dir/test_scene.cpp.o
+[19/31] Building CXX object tests/CMakeFiles/mobile3d_core_tests.dir/test_commands.cpp.o
+[20/31] Building CXX object tests/CMakeFiles/mobile3d_core_tests.dir/test_selection.cpp.o
+[21/31] Building CXX object tests/CMakeFiles/mobile3d_core_tests.dir/test_project.cpp.o
+FAILED: [code=1] tests/CMakeFiles/mobile3d_core_tests.dir/test_project.cpp.o 
+/usr/bin/c++  -I/home/runner/work/3dbase/3dbase/tests -I/home/runner/work/3dbase/3dbase/src/core/include -I/home/runner/work/3dbase/3dbase/src/editor/include -I/home/runner/work/3dbase/3dbase/src/render/include -std=c++20 -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wnon-virtual-dtor -Werror -MD -MT tests/CMakeFiles/mobile3d_core_tests.dir/test_project.cpp.o -MF tests/CMakeFiles/mobile3d_core_tests.dir/test_project.cpp.o.d -o tests/CMakeFiles/mobile3d_core_tests.dir/test_project.cpp.o -c /home/runner/work/3dbase/3dbase/tests/test_project.cpp
+/home/runner/work/3dbase/3dbase/tests/test_project.cpp: In function ‘void test_fn_76()’:
+/home/runner/work/3dbase/3dbase/tests/test_project.cpp:77:23: error: ‘uniqueProjectPath’ was not declared in this scope
+   77 |     const auto root = uniqueProjectPath();
+      |                       ^~~~~~~~~~~~~~~~~
+/home/runner/work/3dbase/3dbase/tests/test_project.cpp:78:5: error: ‘ProjectCleanup’ was not declared in this scope
+   78 |     ProjectCleanup cleanup(root);
+      |     ^~~~~~~~~~~~~~
+In file included from /home/runner/work/3dbase/3dbase/tests/test_project.cpp:1:
+/home/runner/work/3dbase/3dbase/tests/test_project.cpp:90:18: error: ‘m3d::SceneSerializer’ has not been declared
+   90 |     REQUIRE(m3d::SceneSerializer::write(file, scene, &error));
+      |                  ^~~~~~~~~~~~~~~
+/home/runner/work/3dbase/3dbase/tests/test_harness.hpp:45:63: note: in definition of macro ‘REQUIRE’
+   45 | #define REQUIRE(expression) ::test::require(static_cast<bool>(expression), #expression, __FILE__, __LINE__)
+      |                                                               ^~~~~~~~~~
+/home/runner/work/3dbase/3dbase/tests/test_project.cpp:91:30: error: ‘m3d::SceneSerializer’ has not been declared
+   91 |     const auto loaded = m3d::SceneSerializer::read(file, &error);
+      |                              ^~~~~~~~~~~~~~~
+[22/31] Linking CXX static library src/core/libmobile3d_core.a
+ninja: build stopped: subcommand failed.
+exit_status=1
