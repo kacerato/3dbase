@@ -94,12 +94,6 @@ QString graphicsApiName(QSGRendererInterface::GraphicsApi api) {
     return std::hypot(static_cast<float>(value.x()), static_cast<float>(value.y()));
 }
 
-[[nodiscard]] QPointF normalizedPoint(QPointF value) noexcept {
-    const float length = pointLength(value);
-    if (length <= 1.0e-5F) return {};
-    return value / static_cast<qreal>(length);
-}
-
 [[nodiscard]] m3d::Vec3 objectWorldPosition(const m3d::RenderObjectSnapshot& object) noexcept {
     return {
         object.worldTransform.at(0, 3),
