@@ -73,6 +73,7 @@ public:
     [[nodiscard]] EditableVertexId addVertex(Vec3 position);
     [[nodiscard]] std::optional<EditableFaceId> addFace(std::span<const EditableVertexId> vertices,
                                                          std::string* error = nullptr);
+    [[nodiscard]] bool removeFace(EditableFaceId face, std::string* error = nullptr);
 
     [[nodiscard]] const EditableVertex* findVertex(EditableVertexId id) const noexcept;
     [[nodiscard]] EditableVertex* findVertex(EditableVertexId id) noexcept;
@@ -85,6 +86,14 @@ public:
     [[nodiscard]] std::vector<EditableEdge> edges() const;
     [[nodiscard]] std::vector<EditableFace> faces() const;
     [[nodiscard]] std::vector<EditableVertexId> faceVertices(EditableFaceId face) const;
+    [[nodiscard]] std::optional<Vec3> faceNormal(EditableFaceId face) const noexcept;
+
+    [[nodiscard]] std::optional<EditableFaceId> extrudeFace(EditableFaceId face, float distance,
+                                                             std::string* error = nullptr);
+    [[nodiscard]] std::optional<EditableFaceId> insetFace(EditableFaceId face, float ratio,
+                                                           std::string* error = nullptr);
+    [[nodiscard]] std::optional<std::vector<EditableFaceId>> subdivideFace(
+        EditableFaceId face, std::string* error = nullptr);
 
     [[nodiscard]] std::size_t vertexCount() const noexcept { return vertexCount_; }
     [[nodiscard]] std::size_t halfEdgeCount() const noexcept { return halfEdgeCount_; }

@@ -2,6 +2,7 @@ add_library(mobile3d_core STATIC
     src/id.cpp
     src/mesh_resource.cpp
     src/editable_mesh.cpp
+    src/editable_mesh_operations.cpp
     src/scene.cpp
     src/command_stack.cpp
     src/composite_command.cpp
