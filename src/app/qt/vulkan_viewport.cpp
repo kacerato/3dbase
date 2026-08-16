@@ -141,7 +141,10 @@ QString graphicsApiName(QSGRendererInterface::GraphicsApi api) {
     for (const auto& object : snapshot.objects()) {
         if (object.selected && !hasSelectedAncestor(snapshot, object)) roots.push_back(&object);
     }
-    if (roots.empty()) return presentation;
+    if (roots.empty() || std::any_of(roots.cbegin(), roots.cend(),
+                                     [](const auto* object) { return object->locked; })) {
+        return presentation;
+    }
 
     presentation.visible = true;
     presentation.tool = controller->transformToolValue();

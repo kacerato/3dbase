@@ -162,6 +162,7 @@ RenderSceneSnapshot RenderSnapshotBuilder::build(const Scene& scene,
             .parent = object.parent,
             .meshResource = object.meshResource,
             .visible = object.visible,
+            .locked = object.locked,
             .selected = selection.contains(object.id),
             .active = active && *active == object.id,
         });

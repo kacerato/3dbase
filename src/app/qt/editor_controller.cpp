@@ -303,6 +303,22 @@ bool EditorController::duplicateSelection() {
     return true;
 }
 
+bool EditorController::setObjectVisible(const QString& objectId, bool visible) {
+    const auto id = m3d::ObjectId::fromString(objectId.toStdString());
+    if (!id || !session_.setObjectVisible(*id, visible)) return false;
+    setStatus(visible ? QStringLiteral("Object shown.") : QStringLiteral("Object hidden."));
+    refreshUi();
+    return true;
+}
+
+bool EditorController::setObjectLocked(const QString& objectId, bool locked) {
+    const auto id = m3d::ObjectId::fromString(objectId.toStdString());
+    if (!id || !session_.setObjectLocked(*id, locked)) return false;
+    setStatus(locked ? QStringLiteral("Object locked.") : QStringLiteral("Object unlocked."));
+    refreshUi();
+    return true;
+}
+
 bool EditorController::selectObject(const QString& objectId, bool toggle) {
     const auto parsed = m3d::ObjectId::fromString(objectId.toStdString());
     if (!parsed) {

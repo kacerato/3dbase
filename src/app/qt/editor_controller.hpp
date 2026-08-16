@@ -113,6 +113,8 @@ public:
     Q_INVOKABLE bool addObject(const QString& typeName);
     Q_INVOKABLE bool deleteSelection();
     Q_INVOKABLE bool duplicateSelection();
+    Q_INVOKABLE bool setObjectVisible(const QString& objectId, bool visible);
+    Q_INVOKABLE bool setObjectLocked(const QString& objectId, bool locked);
     Q_INVOKABLE bool selectObject(const QString& objectId, bool toggle = false);
     Q_INVOKABLE void clearSelection();
     Q_INVOKABLE bool renameActive(const QString& name);

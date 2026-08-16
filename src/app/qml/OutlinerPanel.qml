@@ -54,6 +54,8 @@ Rectangle {
                 required property bool selected
                 required property bool active
                 required property bool hasChildren
+                required property bool visible
+                required property bool locked
 
                 width: ListView.view.width
                 height: 48
@@ -88,11 +90,30 @@ Rectangle {
                             elide: Text.ElideRight
                         }
                     }
+
+                    ToolButton {
+                        id: visibilityButton
+                        Layout.preferredWidth: 36
+                        Layout.preferredHeight: 36
+                        text: rowRoot.visible ? "◉" : "○"
+                        onClicked: root.controller.setObjectVisible(rowRoot.objectId, !rowRoot.visible)
+                    }
+
+                    ToolButton {
+                        id: lockButton
+                        Layout.preferredWidth: 36
+                        Layout.preferredHeight: 36
+                        text: rowRoot.locked ? "🔒" : "🔓"
+                        onClicked: root.controller.setObjectLocked(rowRoot.objectId, !rowRoot.locked)
+                    }
                 }
 
                 MouseArea {
                     id: mouseArea
-                    anchors.fill: parent
+                    anchors.left: parent.left
+                    anchors.right: visibilityButton.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
                     onClicked: root.controller.selectObject(rowRoot.objectId, false)
                     onPressAndHold: root.controller.selectObject(rowRoot.objectId, true)
                 }

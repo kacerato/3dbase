@@ -17,6 +17,8 @@ public:
         SelectedRole,
         ActiveRole,
         HasChildrenRole,
+        VisibleRole,
+        LockedRole,
     };
 
     explicit OutlinerModel(m3d::EditorSession& session, QObject* parent = nullptr);

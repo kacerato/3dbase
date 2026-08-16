@@ -31,6 +31,7 @@ struct RenderObjectSnapshot final {
     std::optional<ObjectId> parent{};
     std::optional<ResourceId> meshResource{};
     bool visible{true};
+    bool locked{false};
     bool selected{false};
     bool active{false};
 };

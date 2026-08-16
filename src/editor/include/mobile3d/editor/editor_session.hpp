@@ -58,6 +58,8 @@ public:
     [[nodiscard]] bool deleteObject(ObjectId object);
     [[nodiscard]] bool deleteSelection();
     [[nodiscard]] bool duplicateSelection();
+    [[nodiscard]] bool setObjectVisible(ObjectId object, bool visible);
+    [[nodiscard]] bool setObjectLocked(ObjectId object, bool locked);
     [[nodiscard]] bool renameObject(ObjectId object, std::string name);
     [[nodiscard]] bool transformObject(ObjectId object, const Transform& transform);
     [[nodiscard]] bool beginTransformTransaction(const std::vector<ObjectId>& objects,

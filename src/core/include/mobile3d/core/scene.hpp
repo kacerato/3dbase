@@ -35,6 +35,8 @@ public:
     [[nodiscard]] std::size_t meshResourceCount() const noexcept { return meshResources_.size(); }
 
     [[nodiscard]] bool rename(ObjectId id, std::string name);
+    [[nodiscard]] bool setVisible(ObjectId id, bool visible);
+    [[nodiscard]] bool setLocked(ObjectId id, bool locked);
     [[nodiscard]] bool setTransform(ObjectId id, const Transform& transform);
     [[nodiscard]] bool reparent(ObjectId id, std::optional<ObjectId> newParent);
     [[nodiscard]] bool canReparent(ObjectId id, std::optional<ObjectId> newParent) const;

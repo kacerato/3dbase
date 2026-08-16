@@ -87,6 +87,38 @@ private:
     bool initialized_{false};
 };
 
+class SetObjectVisibilityCommand final : public EditorCommand {
+public:
+    SetObjectVisibilityCommand(Scene& scene, ObjectId object, bool visible);
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "Set Visibility"; }
+    [[nodiscard]] bool execute() override;
+    [[nodiscard]] bool undo() override;
+
+private:
+    Scene& scene_;
+    ObjectId object_{};
+    bool previous_{true};
+    bool visible_{true};
+    bool captured_{false};
+};
+
+class SetObjectLockedCommand final : public EditorCommand {
+public:
+    SetObjectLockedCommand(Scene& scene, ObjectId object, bool locked);
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "Set Lock"; }
+    [[nodiscard]] bool execute() override;
+    [[nodiscard]] bool undo() override;
+
+private:
+    Scene& scene_;
+    ObjectId object_{};
+    bool previous_{false};
+    bool locked_{false};
+    bool captured_{false};
+};
+
 class RenameObjectCommand final : public EditorCommand {
 public:
     RenameObjectCommand(Scene& scene, ObjectId object, std::string newName);

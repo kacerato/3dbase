@@ -248,6 +248,40 @@ bool DuplicateObjectsCommand::undo() {
     return success;
 }
 
+SetObjectVisibilityCommand::SetObjectVisibilityCommand(Scene& scene, ObjectId object, bool visible)
+    : scene_(scene), object_(object), visible_(visible) {}
+
+bool SetObjectVisibilityCommand::execute() {
+    const auto* object = scene_.find(object_);
+    if (!object) return false;
+    if (!captured_) {
+        previous_ = object->visible;
+        captured_ = true;
+    }
+    return scene_.setVisible(object_, visible_);
+}
+
+bool SetObjectVisibilityCommand::undo() {
+    return captured_ && scene_.setVisible(object_, previous_);
+}
+
+SetObjectLockedCommand::SetObjectLockedCommand(Scene& scene, ObjectId object, bool locked)
+    : scene_(scene), object_(object), locked_(locked) {}
+
+bool SetObjectLockedCommand::execute() {
+    const auto* object = scene_.find(object_);
+    if (!object) return false;
+    if (!captured_) {
+        previous_ = object->locked;
+        captured_ = true;
+    }
+    return scene_.setLocked(object_, locked_);
+}
+
+bool SetObjectLockedCommand::undo() {
+    return captured_ && scene_.setLocked(object_, previous_);
+}
+
 RenameObjectCommand::RenameObjectCommand(Scene& scene, ObjectId object, std::string newName)
     : scene_(scene), object_(object), newName_(std::move(newName)) {}
 

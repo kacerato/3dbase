@@ -149,6 +149,8 @@ std::optional<ObjectId> EditorSession::createMeshObject(MeshResource resource, s
 bool EditorSession::deleteObject(ObjectId object) {
     if (transformTransaction_) return false;
     if (!document_ || !document_->scene.contains(object)) return false;
+    const auto* target = document_->scene.find(object);
+    if (!target || target->locked) return false;
     if (!commands_.execute(std::make_unique<DeleteObjectCommand>(document_->scene, object))) return false;
     sceneMutated(true);
     return true;
@@ -157,6 +159,10 @@ bool EditorSession::deleteObject(ObjectId object) {
 bool EditorSession::deleteSelection() {
     if (transformTransaction_) return false;
     if (!document_ || selection_.empty()) return false;
+    for (const auto id : selection_.selected()) {
+        const auto* object = document_->scene.find(id);
+        if (!object || object->locked) return false;
+    }
     std::vector<ObjectId> roots;
     roots.reserve(selection_.size());
     for (const auto candidate : selection_.selected()) {
@@ -189,6 +195,10 @@ bool EditorSession::deleteSelection() {
 
 bool EditorSession::duplicateSelection() {
     if (transformTransaction_ || !document_ || selection_.empty()) return false;
+    for (const auto id : selection_.selected()) {
+        const auto* object = document_->scene.find(id);
+        if (!object || object->locked) return false;
+    }
     const auto sources = selection_.selected();
     const auto previousActive = selection_.active();
     auto command = std::make_unique<DuplicateObjectsCommand>(document_->scene, sources);
@@ -219,9 +229,35 @@ bool EditorSession::duplicateSelection() {
     return true;
 }
 
+bool EditorSession::setObjectVisible(ObjectId object, bool visible) {
+    if (transformTransaction_ || !document_) return false;
+    const auto* current = document_->scene.find(object);
+    if (!current || current->visible == visible) return false;
+    auto command = std::make_unique<SetObjectVisibilityCommand>(document_->scene, object, visible);
+    if (!commands_.execute(std::move(command))) return false;
+    if (!visible && selection_.contains(object)) {
+        selection_.remove(object);
+        ++selectionRevision_;
+    }
+    sceneMutated(false);
+    return true;
+}
+
+bool EditorSession::setObjectLocked(ObjectId object, bool locked) {
+    if (transformTransaction_ || !document_) return false;
+    const auto* current = document_->scene.find(object);
+    if (!current || current->locked == locked) return false;
+    auto command = std::make_unique<SetObjectLockedCommand>(document_->scene, object, locked);
+    if (!commands_.execute(std::move(command))) return false;
+    sceneMutated(false);
+    return true;
+}
+
 bool EditorSession::renameObject(ObjectId object, std::string name) {
     if (transformTransaction_) return false;
     if (!document_ || !document_->scene.contains(object)) return false;
+    const auto* current = document_->scene.find(object);
+    if (!current || current->locked) return false;
     if (!commands_.execute(std::make_unique<RenameObjectCommand>(document_->scene, object, std::move(name)))) return false;
     sceneMutated(false);
     return true;
@@ -230,6 +266,8 @@ bool EditorSession::renameObject(ObjectId object, std::string name) {
 bool EditorSession::transformObject(ObjectId object, const Transform& transform) {
     if (transformTransaction_) return false;
     if (!document_ || !document_->scene.contains(object)) return false;
+    const auto* current = document_->scene.find(object);
+    if (!current || current->locked) return false;
     if (!commands_.execute(std::make_unique<TransformObjectCommand>(document_->scene, object, transform))) return false;
     sceneMutated(false);
     return true;
@@ -243,7 +281,7 @@ bool EditorSession::beginTransformTransaction(const std::vector<ObjectId>& objec
     transaction.changes.reserve(objects.size());
     for (const auto objectId : objects) {
         const auto* object = document_->scene.find(objectId);
-        if (!object) return false;
+        if (!object || object->locked) return false;
         const auto duplicate = std::find_if(transaction.changes.cbegin(), transaction.changes.cend(),
                                             [objectId](const TransformChange& change) {
                                                 return change.object == objectId;
@@ -312,6 +350,8 @@ bool EditorSession::cancelTransformTransaction() {
 bool EditorSession::reparentObject(ObjectId object, std::optional<ObjectId> parent) {
     if (transformTransaction_) return false;
     if (!document_ || !document_->scene.contains(object)) return false;
+    const auto* current = document_->scene.find(object);
+    if (!current || current->locked) return false;
     if (!commands_.execute(std::make_unique<ReparentObjectCommand>(document_->scene, object, parent))) return false;
     sceneMutated(false);
     return true;

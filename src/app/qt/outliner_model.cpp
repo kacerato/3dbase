@@ -45,6 +45,10 @@ QVariant OutlinerModel::data(const QModelIndex& index, int role) const {
     }
     case HasChildrenRole:
         return row.hasChildren;
+    case VisibleRole:
+        return object->visible;
+    case LockedRole:
+        return object->locked;
     default:
         return {};
     }
@@ -59,6 +63,8 @@ QHash<int, QByteArray> OutlinerModel::roleNames() const {
         {SelectedRole, "selected"},
         {ActiveRole, "active"},
         {HasChildrenRole, "hasChildren"},
+        {VisibleRole, "visible"},
+        {LockedRole, "locked"},
     };
 }
 

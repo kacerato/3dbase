@@ -327,3 +327,50 @@ TEST_CASE("duplicate shared selected mesh resource is copied once for the duplic
     REQUIRE(duplicateResource.has_value());
     REQUIRE(*duplicateResource != resourceId);
 }
+
+
+TEST_CASE("visibility is command based and hidden selection is cleared") {
+    const auto path = uniqueProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Visibility", &error));
+    const auto object = session.createObject(m3d::ObjectType::Empty, "Object");
+    REQUIRE(object.has_value());
+    REQUIRE(session.select(*object, m3d::SelectionMode::Replace));
+    REQUIRE(session.setObjectVisible(*object, false));
+    REQUIRE(!session.scene()->find(*object)->visible);
+    REQUIRE(session.selection().empty());
+    REQUIRE(session.nextUndoName() == "Set Visibility");
+    REQUIRE(session.undo());
+    REQUIRE(session.scene()->find(*object)->visible);
+    REQUIRE(session.redo());
+    REQUIRE(!session.scene()->find(*object)->visible);
+}
+
+TEST_CASE("locked objects remain inspectable but reject editor mutations") {
+    const auto path = uniqueProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Locking", &error));
+    const auto object = session.createObject(m3d::ObjectType::Empty, "Object");
+    REQUIRE(object.has_value());
+    REQUIRE(session.setObjectLocked(*object, true));
+    REQUIRE(session.scene()->find(*object)->locked);
+    REQUIRE(session.select(*object, m3d::SelectionMode::Replace));
+
+    auto transform = session.scene()->find(*object)->localTransform;
+    transform.position.x = 3.0F;
+    REQUIRE(!session.transformObject(*object, transform));
+    REQUIRE(!session.renameObject(*object, "Renamed"));
+    REQUIRE(!session.reparentObject(*object, std::nullopt));
+    REQUIRE(!session.deleteObject(*object));
+    REQUIRE(!session.deleteSelection());
+    REQUIRE(!session.duplicateSelection());
+    REQUIRE(!session.beginTransformTransaction({*object}, "Locked Transform"));
+
+    REQUIRE(session.setObjectLocked(*object, false));
+    REQUIRE(!session.scene()->find(*object)->locked);
+    REQUIRE(session.transformObject(*object, transform));
+}

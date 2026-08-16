@@ -158,6 +158,20 @@ bool Scene::rename(ObjectId id, std::string name) {
     return true;
 }
 
+bool Scene::setVisible(ObjectId id, bool visible) {
+    auto* object = find(id);
+    if (!object) return false;
+    object->visible = visible;
+    return true;
+}
+
+bool Scene::setLocked(ObjectId id, bool locked) {
+    auto* object = find(id);
+    if (!object) return false;
+    object->locked = locked;
+    return true;
+}
+
 bool Scene::setTransform(ObjectId id, const Transform& transform) {
     auto* object = find(id);
     if (!object) return false;
