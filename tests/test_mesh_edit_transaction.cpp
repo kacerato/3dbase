@@ -110,7 +110,7 @@ TEST_CASE("mesh edit cancel restores authored topology and derived render cache"
     REQUIRE(!session.isDirty());
 }
 
-TEST_CASE("no-op mesh edit does not add an undo entry") {
+TEST_CASE("no-op mesh edit preserves the existing undo history") {
     const auto path = meshEditProjectPath();
     MeshEditCleanup cleanup(path);
     m3d::EditorSession session;
@@ -119,10 +119,12 @@ TEST_CASE("no-op mesh edit does not add an undo entry") {
     const auto object = session.createObject(m3d::ObjectType::Mesh, "Cube");
     REQUIRE(object.has_value());
     REQUIRE(session.saveProject(&error));
-    REQUIRE(!session.canUndo());
+    REQUIRE(session.canUndo());
+    const std::string previousUndoName(session.nextUndoName());
 
     REQUIRE(session.beginMeshEdit(*object, &error));
     REQUIRE(session.commitMeshEdit("No-op Mesh Edit", &error));
-    REQUIRE(!session.canUndo());
+    REQUIRE(session.canUndo());
+    REQUIRE(session.nextUndoName() == previousUndoName);
     REQUIRE(!session.isDirty());
 }
