@@ -1,0 +1,32 @@
+name: Capture Core Build
+on:
+  push:
+    branches: [main]
+    paths: ['.debug/trigger']
+permissions:
+  contents: write
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Capture compiler output
+        shell: bash
+        run: |
+          mkdir -p .debug
+          set +e
+          {
+            cmake -S . -B build-debug -G Ninja -DMOBILE3D_BUILD_TESTS=ON -DMOBILE3D_BUILD_QT_APP=OFF -DMOBILE3D_WARNINGS_AS_ERRORS=ON
+            cmake --build build-debug --parallel 2
+          } > .debug/core-build.log 2>&1
+          status=$?
+          echo "exit_status=$status" >> .debug/core-build.log
+          exit 0
+      - name: Commit captured log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .debug/core-build.log
+          git commit -m "capture core build diagnostics"
+          git push origin HEAD:main
