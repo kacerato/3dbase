@@ -60,7 +60,7 @@ The editor shell is no longer considered source-only: CI compiles it, loads QML 
 
 ## Stage 3 — Vulkan viewport foundation
 
-**Status: in progress. The viewport now renders persistent authored mesh resources through a native Vulkan GPU cache with depth-correct multisampled drawing and asynchronous GPU object picking; selection outline remains next.**
+**Status: complete for the current no-APK milestone. The native Vulkan viewport renders persistent authored meshes with depth-correct multisampling, GPU picking, selection visualization, device-local uploads and a validated persistent pipeline cache. Physical Android lifecycle validation remains intentionally deferred until APK/device testing is allowed.**
 
 - [x] Immutable `RenderSceneSnapshot` boundary; renderer never receives live `Scene`/selection pointers.
 - [x] Persistent/shareable `MeshResource` identity separated from `SceneObject` identity.
@@ -102,19 +102,16 @@ The editor shell is no longer considered source-only: CI compiles it, loads QML 
 - [x] Single-sample offscreen GPU ID pass with its own depth attachment so picking is independent of visible MSAA.
 - [x] 1x1 scissored pick rasterization and asynchronous frame-slot readback without `vkDeviceWaitIdle`.
 - [x] Mouse click and touch tap resolve the GPU PickId back to `ObjectId` and update the editor selection on the GUI thread.
+- [x] Selection outline uses an expanded inverted-hull pipeline with front-face culling, depth test enabled and depth writes disabled.
+- [x] Authored mesh vertex/index buffers use `DEVICE_LOCAL` memory populated through `HOST_VISIBLE` staging buffers, `vkCmdCopyBuffer` and explicit transfer-to-vertex-input barriers.
+- [x] Staging buffers and replaced GPU meshes are retired per Qt frame-slot and reclaimed only when that slot is safe again; uploads do not call `vkDeviceWaitIdle`.
+- [x] Vulkan pipeline cache is persisted atomically under the app cache directory and isolated by vendor/device/driver/pipeline-cache UUID.
+- [x] CI validates cold-cache creation followed by a second Vulkan process that must load the persisted cache while still passing mesh draw, GPU picking and selection-outline checks.
 - [ ] Physical Android Vulkan lifecycle/suspend-resume validation. Deferred with APK/device testing.
-- [ ] Device-local/staging-buffer allocator abstraction for larger authored geometry; current cache intentionally uses the simpler validated host-visible upload path.
-- [ ] Vulkan pipeline cache persisted across sessions/devices where valid.
-- [ ] Selection outline.
 
-The next Stage 3 implementation order is intentionally:
+All software-side Stage 3 gates are complete. The remaining Android lifecycle item is deliberately deferred by the repository APK policy and is not treated as a blocker for advancing to Stage 4.
 
-1. selection outline;
-2. device-local/staging allocator and upload batching before large imported scenes;
-3. pipeline-cache persistence;
-4. Android physical lifecycle validation when APK testing is allowed.
-
-Exit criterion: the real authored scene is visible/selectable in a stable Vulkan viewport across Android lifecycle changes.
+Exit criterion for the current milestone: authored scene geometry is visible and selectable in a stable, tested native Vulkan viewport on the host path, and the same native source tree cross-builds successfully for Android arm64.
 
 ## Stage 4 — Transform and scene editing vertical slice
 
