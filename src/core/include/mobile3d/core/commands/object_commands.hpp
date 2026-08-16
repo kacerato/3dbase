@@ -58,6 +58,35 @@ private:
     std::vector<MeshResource> removedResources_;
 };
 
+struct DuplicateObjectMapping final {
+    ObjectId source{};
+    ObjectId duplicate{};
+};
+
+class DuplicateObjectsCommand final : public EditorCommand {
+public:
+    DuplicateObjectsCommand(Scene& scene, std::vector<ObjectId> objects);
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "Duplicate Selection"; }
+    [[nodiscard]] bool execute() override;
+    [[nodiscard]] bool undo() override;
+    [[nodiscard]] const std::vector<DuplicateObjectMapping>& mappings() const noexcept {
+        return mappings_;
+    }
+
+private:
+    [[nodiscard]] bool initialize();
+    [[nodiscard]] bool insertPrepared();
+    void rollbackInserted() noexcept;
+
+    Scene& scene_;
+    std::vector<ObjectId> sources_;
+    std::vector<DuplicateObjectMapping> mappings_;
+    std::vector<SceneObject> objects_;
+    std::vector<MeshResource> resources_;
+    bool initialized_{false};
+};
+
 class RenameObjectCommand final : public EditorCommand {
 public:
     RenameObjectCommand(Scene& scene, ObjectId object, std::string newName);
