@@ -2,7 +2,7 @@ name: Apply Stage 5 Mesh Lifecycle
 on:
   push:
     branches: [main]
-    paths: ['.automation/stage5_mesh_lifecycle.py']
+    paths: ['.automation/stage5_mesh_lifecycle*']
 permissions:
   contents: write
 jobs:
@@ -21,6 +21,11 @@ jobs:
         run: ctest --test-dir /tmp/mobile3d-stage5-lifecycle --output-on-failure
       - name: Commit validated lifecycle code
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tests/test_mesh_edit_transaction.cpp')
+          p.write_text(p.read_text().rstrip() + '\n')
+          PY
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src tests
