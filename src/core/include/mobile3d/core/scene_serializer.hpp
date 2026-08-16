@@ -10,7 +10,7 @@ namespace m3d {
 
 class SceneSerializer final {
 public:
-    static constexpr int currentFormatVersion = 2;
+    static constexpr int currentFormatVersion = 3;
 
     [[nodiscard]] static bool write(const std::filesystem::path& path,
                                     const Scene& scene,
