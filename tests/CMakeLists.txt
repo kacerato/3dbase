@@ -6,6 +6,7 @@ add_executable(mobile3d_core_tests
     test_project.cpp
     test_editor_session.cpp
     test_render_snapshot.cpp
+    test_render_world_rotation.cpp
     test_viewport_camera.cpp
     test_transform_gizmo.cpp
     test_transform_manipulator.cpp
