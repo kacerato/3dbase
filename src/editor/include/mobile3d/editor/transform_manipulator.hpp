@@ -23,6 +23,12 @@ public:
                                       TransformConstraint constraint,
                                       TransformSnapSettings snapping = {});
     [[nodiscard]] bool updateTranslation(Vec3 gizmoComponents);
+    [[nodiscard]] bool beginRotate(EditorSession& session,
+                                   TransformSpace space,
+                                   TransformConstraint axisConstraint,
+                                   PivotMode pivotMode,
+                                   TransformSnapSettings snapping = {});
+    [[nodiscard]] bool updateRotation(float angleRadians);
     [[nodiscard]] bool commit();
     [[nodiscard]] bool cancel();
 
@@ -30,6 +36,8 @@ public:
     [[nodiscard]] TransformTool tool() const noexcept { return tool_; }
     [[nodiscard]] TransformSpace space() const noexcept { return space_; }
     [[nodiscard]] TransformConstraint constraint() const noexcept { return constraint_; }
+    [[nodiscard]] PivotMode pivotMode() const noexcept { return pivotMode_; }
+    [[nodiscard]] Vec3 pivotWorld() const noexcept { return pivotWorld_; }
     [[nodiscard]] const GizmoBasis& basis() const noexcept { return basis_; }
 
 private:
@@ -37,6 +45,10 @@ private:
         ObjectId object{};
         Transform initialLocal{};
         std::array<float, 9> inverseParentWorldLinear{};
+        Vec3 parentWorldPosition{};
+        Vec3 initialWorldPosition{};
+        Quat parentWorldRotation{};
+        Quat initialWorldRotation{};
     };
 
     void reset() noexcept;
@@ -45,6 +57,8 @@ private:
     TransformTool tool_{TransformTool::Translate};
     TransformSpace space_{TransformSpace::Global};
     TransformConstraint constraint_{TransformConstraint::Free};
+    PivotMode pivotMode_{PivotMode::Median};
+    Vec3 pivotWorld_{};
     TransformSnapSettings snapping_{};
     GizmoBasis basis_{};
     std::vector<Target> targets_;

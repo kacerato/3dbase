@@ -35,6 +35,32 @@ constexpr float kEpsilon = 1.0e-7F;
     });
 }
 
+[[nodiscard]] Quat conjugated(Quat value) noexcept {
+    const Quat q = normalized(value);
+    return {-q.x, -q.y, -q.z, q.w};
+}
+
+[[nodiscard]] Vec3 added(Vec3 left, Vec3 right) noexcept {
+    return {left.x + right.x, left.y + right.y, left.z + right.z};
+}
+
+[[nodiscard]] Vec3 subtracted(Vec3 left, Vec3 right) noexcept {
+    return {left.x - right.x, left.y - right.y, left.z - right.z};
+}
+
+[[nodiscard]] Vec3 rotated(Vec3 value, Quat rotation) noexcept {
+    const Quat q = normalized(rotation);
+    const Quat vector{value.x, value.y, value.z, 0.0F};
+    const Quat result = multiplied(multiplied(q, vector), conjugated(q));
+    return {result.x, result.y, result.z};
+}
+
+[[nodiscard]] bool isAxisConstraint(TransformConstraint constraint) noexcept {
+    return constraint == TransformConstraint::X ||
+           constraint == TransformConstraint::Y ||
+           constraint == TransformConstraint::Z;
+}
+
 [[nodiscard]] Matrix3 rotationMatrix(Quat quaternion) noexcept {
     const Quat q = normalized(quaternion);
     const float xx = q.x * q.x;
@@ -117,6 +143,15 @@ constexpr float kEpsilon = 1.0e-7F;
     return multiplied(worldLinear(scene, *object->parent), local);
 }
 
+[[nodiscard]] Vec3 worldPosition(const Scene& scene, ObjectId objectId) noexcept {
+    const SceneObject* object = scene.find(objectId);
+    if (!object) return {};
+    if (!object->parent) return object->localTransform.position;
+    const Vec3 parentPosition = worldPosition(scene, *object->parent);
+    const Matrix3 parentLinear = worldLinear(scene, *object->parent);
+    return added(parentPosition, multiplied(parentLinear, object->localTransform.position));
+}
+
 [[nodiscard]] Quat worldRotation(const Scene& scene, ObjectId objectId) noexcept {
     const SceneObject* object = scene.find(objectId);
     if (!object) return {};
@@ -163,10 +198,21 @@ bool TransformManipulator::beginTranslate(EditorSession& session,
         const SceneObject* object = scene->find(objectId);
         if (!object) return false;
         Matrix3 parentLinear = identityMatrix();
-        if (object->parent) parentLinear = worldLinear(*scene, *object->parent);
+        Vec3 parentPosition{};
+        Quat parentRotation{};
+        if (object->parent) {
+            parentLinear = worldLinear(*scene, *object->parent);
+            parentPosition = worldPosition(*scene, *object->parent);
+            parentRotation = worldRotation(*scene, *object->parent);
+        }
         const auto inverseParent = inverse(parentLinear);
         if (!inverseParent) return false;
-        newTargets.push_back(Target{objectId, object->localTransform, *inverseParent});
+        const Vec3 initialWorldPosition = added(
+            parentPosition, multiplied(parentLinear, object->localTransform.position));
+        const Quat initialWorldRotation = multiplied(parentRotation, object->localTransform.rotation);
+        newTargets.push_back(Target{objectId, object->localTransform, *inverseParent,
+                                    parentPosition, initialWorldPosition,
+                                    parentRotation, initialWorldRotation});
         transactionObjects.push_back(objectId);
     }
     if (newTargets.empty()) return false;
@@ -200,6 +246,98 @@ bool TransformManipulator::updateTranslation(Vec3 gizmoComponents) {
     return true;
 }
 
+bool TransformManipulator::beginRotate(EditorSession& session,
+                                       TransformSpace space,
+                                       TransformConstraint axisConstraint,
+                                       PivotMode pivotMode,
+                                       TransformSnapSettings snapping) {
+    if (active() || !isAxisConstraint(axisConstraint) || !session.hasProject() ||
+        session.hasTransformTransaction() || session.selection().empty()) return false;
+    const Scene* scene = session.scene();
+    if (!scene) return false;
+
+    const auto activeObject = session.selection().active();
+    const ObjectId basisObject = activeObject.value_or(session.selection().selected().front());
+    const GizmoBasis newBasis = makeGizmoBasis(space, worldRotation(*scene, basisObject));
+
+    std::vector<Target> newTargets;
+    std::vector<ObjectId> transactionObjects;
+    newTargets.reserve(session.selection().size());
+    transactionObjects.reserve(session.selection().size());
+    for (const ObjectId objectId : session.selection().selected()) {
+        if (hasSelectedAncestor(*scene, session.selection(), objectId)) continue;
+        const SceneObject* object = scene->find(objectId);
+        if (!object) return false;
+        Matrix3 parentLinear = identityMatrix();
+        Vec3 parentPosition{};
+        Quat parentRotation{};
+        if (object->parent) {
+            parentLinear = worldLinear(*scene, *object->parent);
+            parentPosition = worldPosition(*scene, *object->parent);
+            parentRotation = worldRotation(*scene, *object->parent);
+        }
+        const auto inverseParent = inverse(parentLinear);
+        if (!inverseParent) return false;
+        const Vec3 initialWorldPosition = added(
+            parentPosition, multiplied(parentLinear, object->localTransform.position));
+        const Quat initialWorldRotation = multiplied(parentRotation, object->localTransform.rotation);
+        newTargets.push_back(Target{objectId, object->localTransform, *inverseParent,
+                                    parentPosition, initialWorldPosition,
+                                    parentRotation, initialWorldRotation});
+        transactionObjects.push_back(objectId);
+    }
+    if (newTargets.empty()) return false;
+
+    Vec3 pivot{};
+    if (pivotMode == PivotMode::Active) {
+        pivot = worldPosition(*scene, basisObject);
+    } else if (pivotMode == PivotMode::Median) {
+        for (const auto& target : newTargets) pivot = added(pivot, target.initialWorldPosition);
+        const float inverseCount = 1.0F / static_cast<float>(newTargets.size());
+        pivot.x *= inverseCount;
+        pivot.y *= inverseCount;
+        pivot.z *= inverseCount;
+    }
+
+    if (!session.beginTransformTransaction(transactionObjects, "Rotate Objects")) return false;
+    session_ = &session;
+    tool_ = TransformTool::Rotate;
+    space_ = space;
+    constraint_ = axisConstraint;
+    pivotMode_ = pivotMode;
+    pivotWorld_ = pivot;
+    snapping_ = snapping;
+    basis_ = newBasis;
+    targets_ = std::move(newTargets);
+    return true;
+}
+
+bool TransformManipulator::updateRotation(float angleRadians) {
+    if (!session_ || tool_ != TransformTool::Rotate) return false;
+    const Quat worldDelta = composeRotationDelta(angleRadians, constraint_, basis_, snapping_);
+    for (const auto& target : targets_) {
+        const Vec3 pivot = pivotMode_ == PivotMode::IndividualOrigins
+            ? target.initialWorldPosition : pivotWorld_;
+        const Vec3 worldPositionAfter = added(
+            pivot, rotated(subtracted(target.initialWorldPosition, pivot), worldDelta));
+        const Vec3 localPosition = multiplied(
+            target.inverseParentWorldLinear,
+            subtracted(worldPositionAfter, target.parentWorldPosition));
+        const Quat worldRotationAfter = multiplied(worldDelta, target.initialWorldRotation);
+        const Quat localRotation = multiplied(conjugated(target.parentWorldRotation),
+                                              worldRotationAfter);
+        Transform preview = target.initialLocal;
+        preview.position = localPosition;
+        preview.rotation = localRotation;
+        if (!session_->previewTransform(target.object, preview)) {
+            (void)session_->cancelTransformTransaction();
+            reset();
+            return false;
+        }
+    }
+    return true;
+}
+
 bool TransformManipulator::commit() {
     if (!session_) return false;
     EditorSession* session = session_;
@@ -219,6 +357,8 @@ void TransformManipulator::reset() noexcept {
     tool_ = TransformTool::Translate;
     space_ = TransformSpace::Global;
     constraint_ = TransformConstraint::Free;
+    pivotMode_ = PivotMode::Median;
+    pivotWorld_ = {};
     snapping_ = {};
     basis_ = {};
     targets_.clear();

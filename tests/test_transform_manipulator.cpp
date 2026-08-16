@@ -147,3 +147,105 @@ TEST_CASE("selected child is not double translated when its selected parent move
     REQUIRE(session.scene()->find(*parent)->localTransform == parentBefore);
     REQUIRE(session.scene()->find(*child)->localTransform == childBefore);
 }
+
+
+TEST_CASE("median pivot rotation moves objects around shared center and commits one undo") {
+    const auto path = uniqueManipulatorProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Median Rotation", &error));
+    const auto left = session.createObject(m3d::ObjectType::Empty, "Left");
+    const auto right = session.createObject(m3d::ObjectType::Empty, "Right");
+    REQUIRE(left.has_value());
+    REQUIRE(right.has_value());
+    auto leftTransform = session.scene()->find(*left)->localTransform;
+    auto rightTransform = session.scene()->find(*right)->localTransform;
+    leftTransform.position.x = -1.0F;
+    rightTransform.position.x = 1.0F;
+    REQUIRE(session.transformObject(*left, leftTransform));
+    REQUIRE(session.transformObject(*right, rightTransform));
+    REQUIRE(session.saveProject(&error));
+    REQUIRE(session.select(*left, m3d::SelectionMode::Replace));
+    REQUIRE(session.select(*right, m3d::SelectionMode::Add));
+
+    m3d::TransformManipulator manipulator;
+    REQUIRE(manipulator.beginRotate(session, m3d::TransformSpace::Global,
+                                    m3d::TransformConstraint::Z,
+                                    m3d::PivotMode::Median));
+    REQUIRE(near(manipulator.pivotWorld().x, 0.0F));
+    REQUIRE(manipulator.updateRotation(kPi * 0.5F));
+    const auto leftPreview = session.scene()->find(*left)->localTransform;
+    const auto rightPreview = session.scene()->find(*right)->localTransform;
+    REQUIRE(near(leftPreview.position.x, 0.0F));
+    REQUIRE(near(leftPreview.position.y, -1.0F));
+    REQUIRE(near(rightPreview.position.x, 0.0F));
+    REQUIRE(near(rightPreview.position.y, 1.0F));
+    REQUIRE(manipulator.commit());
+    REQUIRE(session.nextUndoName() == "Rotate Objects");
+    REQUIRE(session.undo());
+    REQUIRE(session.scene()->find(*left)->localTransform == leftTransform);
+    REQUIRE(session.scene()->find(*right)->localTransform == rightTransform);
+}
+
+TEST_CASE("individual origins rotate orientation without moving object origins") {
+    const auto path = uniqueManipulatorProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Individual Rotation", &error));
+    const auto object = session.createObject(m3d::ObjectType::Empty, "Object");
+    REQUIRE(object.has_value());
+    auto before = session.scene()->find(*object)->localTransform;
+    before.position = {3.0F, 4.0F, 5.0F};
+    REQUIRE(session.transformObject(*object, before));
+    REQUIRE(session.select(*object, m3d::SelectionMode::Replace));
+
+    m3d::TransformSnapSettings snapping;
+    snapping.rotationEnabled = true;
+    snapping.rotationStepRadians = 15.0F * kPi / 180.0F;
+    m3d::TransformManipulator manipulator;
+    REQUIRE(manipulator.beginRotate(session, m3d::TransformSpace::Global,
+                                    m3d::TransformConstraint::Z,
+                                    m3d::PivotMode::IndividualOrigins,
+                                    snapping));
+    REQUIRE(manipulator.updateRotation(17.0F * kPi / 180.0F));
+    const auto preview = session.scene()->find(*object)->localTransform;
+    REQUIRE(preview.position == before.position);
+    REQUIRE(near(preview.rotation.z, std::sin(7.5F * kPi / 180.0F)));
+    REQUIRE(near(preview.rotation.w, std::cos(7.5F * kPi / 180.0F)));
+    REQUIRE(manipulator.cancel());
+    REQUIRE(session.scene()->find(*object)->localTransform == before);
+}
+
+TEST_CASE("active pivot rotation keeps active object origin fixed") {
+    const auto path = uniqueManipulatorProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Active Rotation", &error));
+    const auto other = session.createObject(m3d::ObjectType::Empty, "Other");
+    const auto active = session.createObject(m3d::ObjectType::Empty, "Active");
+    REQUIRE(other.has_value());
+    REQUIRE(active.has_value());
+    auto otherTransform = session.scene()->find(*other)->localTransform;
+    auto activeTransform = session.scene()->find(*active)->localTransform;
+    otherTransform.position = {1.0F, 0.0F, 0.0F};
+    activeTransform.position = {0.0F, 0.0F, 0.0F};
+    REQUIRE(session.transformObject(*other, otherTransform));
+    REQUIRE(session.transformObject(*active, activeTransform));
+    REQUIRE(session.select(*other, m3d::SelectionMode::Replace));
+    REQUIRE(session.select(*active, m3d::SelectionMode::Add));
+
+    m3d::TransformManipulator manipulator;
+    REQUIRE(manipulator.beginRotate(session, m3d::TransformSpace::Global,
+                                    m3d::TransformConstraint::Z,
+                                    m3d::PivotMode::Active));
+    REQUIRE(manipulator.updateRotation(kPi * 0.5F));
+    const auto activePreview = session.scene()->find(*active)->localTransform;
+    const auto otherPreview = session.scene()->find(*other)->localTransform;
+    REQUIRE(activePreview.position == activeTransform.position);
+    REQUIRE(near(otherPreview.position.x, 0.0F));
+    REQUIRE(near(otherPreview.position.y, 1.0F));
+    REQUIRE(manipulator.cancel());
+}
