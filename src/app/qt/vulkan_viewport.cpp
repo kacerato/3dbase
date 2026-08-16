@@ -292,6 +292,9 @@ void VulkanViewport::recordVulkanCommands() {
     if (stats.meshDraws > 0) {
         recordedMeshDrawCount_.fetch_add(stats.meshDraws, std::memory_order_relaxed);
     }
+    if (stats.outlineDraws > 0) {
+        recordedOutlineDrawCount_.fetch_add(stats.outlineDraws, std::memory_order_relaxed);
+    }
 }
 
 void VulkanViewport::updateBackendState(QQuickWindow* window) {

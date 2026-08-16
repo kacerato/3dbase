@@ -47,6 +47,9 @@ public:
     [[nodiscard]] std::uint64_t recordedMeshDrawCount() const noexcept {
         return recordedMeshDrawCount_.load(std::memory_order_relaxed);
     }
+    [[nodiscard]] std::uint64_t recordedOutlineDrawCount() const noexcept {
+        return recordedOutlineDrawCount_.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] std::uint64_t completedPickCount() const noexcept {
         return completedPickCount_.load(std::memory_order_relaxed);
     }
@@ -100,6 +103,7 @@ private:
     Qt::MouseButton navigationButton_{Qt::NoButton};
     std::atomic_uint64_t recordedFrameCount_{0};
     std::atomic_uint64_t recordedMeshDrawCount_{0};
+    std::atomic_uint64_t recordedOutlineDrawCount_{0};
     std::atomic_uint64_t completedPickCount_{0};
     std::atomic_uint64_t successfulPickCount_{0};
     bool mouseDragExceeded_{false};

@@ -142,6 +142,24 @@ struct PickTarget final {
            (static_cast<m3d::PickId>(value[3]) << 24U);
 }
 
+[[nodiscard]] m3d::Mat4 scaleAroundBounds(const m3d::Mat4& world,
+                                          const m3d::Bounds3& bounds,
+                                          float scale) noexcept {
+    const m3d::Vec3 center{
+        (bounds.min.x + bounds.max.x) * 0.5F,
+        (bounds.min.y + bounds.max.y) * 0.5F,
+        (bounds.min.z + bounds.max.z) * 0.5F,
+    };
+    m3d::Mat4 local = m3d::Mat4::identity();
+    local.at(0, 0) = scale;
+    local.at(1, 1) = scale;
+    local.at(2, 2) = scale;
+    local.at(0, 3) = center.x * (1.0F - scale);
+    local.at(1, 3) = center.y * (1.0F - scale);
+    local.at(2, 3) = center.z * (1.0F - scale);
+    return m3d::multiply(world, local);
+}
+
 [[nodiscard]] std::optional<std::uint32_t> findMemoryType(QVulkanFunctions* functions,
                                                            VkPhysicalDevice physicalDevice,
                                                            std::uint32_t typeBits,
@@ -380,6 +398,8 @@ struct VulkanViewportRenderer::Impl final {
     VkPipeline linePipeline{VK_NULL_HANDLE};
     VkPipelineLayout meshPipelineLayout{VK_NULL_HANDLE};
     VkPipeline meshPipeline{VK_NULL_HANDLE};
+    VkPipelineLayout outlinePipelineLayout{VK_NULL_HANDLE};
+    VkPipeline outlinePipeline{VK_NULL_HANDLE};
     std::unordered_map<m3d::ResourceId, GpuMesh, m3d::ResourceIdHash> meshCache;
     PickTarget pickTarget;
 };
@@ -414,7 +434,9 @@ bool createPipeline(VulkanViewportRenderer::Impl& impl,
                     VkSampleCountFlagBits sampleCount,
                     bool linePipeline,
                     VkPipelineLayout& layout,
-                    VkPipeline& pipeline) {
+                    VkPipeline& pipeline,
+                    bool depthWrite = true,
+                    VkCullModeFlags cullMode = VK_CULL_MODE_NONE) {
     QString error;
     const auto vertexCode = linePipeline
         ? VulkanShaderLibrary::viewportLineVertexSpirv(&error)
@@ -484,6 +506,10 @@ bool createPipeline(VulkanViewportRenderer::Impl& impl,
     auto assembly = vkInfo<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);
     assembly.topology = linePipeline ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     PipelineCommonState common(!linePipeline, sampleCount);
+    common.raster.cullMode = cullMode;
+    if (!linePipeline) {
+        common.depthStencil.depthWriteEnable = depthWrite ? VK_TRUE : VK_FALSE;
+    }
 
     auto pipelineInfo = vkInfo<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
     pipelineInfo.stageCount = static_cast<std::uint32_t>(stages.size());
@@ -757,6 +783,8 @@ void VulkanViewportRenderer::release() {
         destroyGpuMesh(impl, mesh);
     }
     impl.meshCache.clear();
+    if (impl.outlinePipeline) impl.deviceFunctions->vkDestroyPipeline(impl.device, impl.outlinePipeline, nullptr);
+    if (impl.outlinePipelineLayout) impl.deviceFunctions->vkDestroyPipelineLayout(impl.device, impl.outlinePipelineLayout, nullptr);
     if (impl.meshPipeline) impl.deviceFunctions->vkDestroyPipeline(impl.device, impl.meshPipeline, nullptr);
     if (impl.meshPipelineLayout) impl.deviceFunctions->vkDestroyPipelineLayout(impl.device, impl.meshPipelineLayout, nullptr);
     if (impl.linePipeline) impl.deviceFunctions->vkDestroyPipeline(impl.device, impl.linePipeline, nullptr);
@@ -957,7 +985,10 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
             !createPipeline(impl, impl.renderPass, vulkanSampleCount(impl.sampleCount), true,
                             impl.linePipelineLayout, impl.linePipeline) ||
             !createPipeline(impl, impl.renderPass, vulkanSampleCount(impl.sampleCount), false,
-                            impl.meshPipelineLayout, impl.meshPipeline)) {
+                            impl.meshPipelineLayout, impl.meshPipeline) ||
+            !createPipeline(impl, impl.renderPass, vulkanSampleCount(impl.sampleCount), false,
+                            impl.outlinePipelineLayout, impl.outlinePipeline, false,
+                            VK_CULL_MODE_FRONT_BIT)) {
             release();
             return stats;
         }
@@ -1022,6 +1053,31 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
                                         0, static_cast<std::uint32_t>(sizeof(m3d::Mat4)),
                                         viewProjection_.values.data());
     deviceFunctions->vkCmdDraw(commandBuffer, impl.gridVertexCount, 1, 0, 0);
+
+    constexpr float outlineScale = 1.035F;
+    constexpr std::array<float, 4> outlineColor{1.0F, 0.48F, 0.08F, 1.0F};
+    deviceFunctions->vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, impl.outlinePipeline);
+    for (const auto& object : snapshot_.objects()) {
+        if (!object.visible || !object.selected || object.type != m3d::ObjectType::Mesh ||
+            !object.meshResource) continue;
+        const auto mesh = impl.meshCache.find(*object.meshResource);
+        const auto* geometry = snapshot_.findMesh(*object.meshResource);
+        if (mesh == impl.meshCache.end() || !geometry || !geometry->bounds) continue;
+        const auto outlineWorld = scaleAroundBounds(object.worldTransform, *geometry->bounds, outlineScale);
+        const MeshPushConstants push{
+            m3d::multiply(viewProjection_, outlineWorld),
+            outlineColor,
+        };
+        deviceFunctions->vkCmdPushConstants(commandBuffer, impl.outlinePipelineLayout,
+                                            VK_SHADER_STAGE_VERTEX_BIT, 0,
+                                            static_cast<std::uint32_t>(sizeof(push)), &push);
+        deviceFunctions->vkCmdBindVertexBuffers(commandBuffer, 0, 1,
+                                                &mesh->second.vertex.buffer, &zeroOffset);
+        deviceFunctions->vkCmdBindIndexBuffer(commandBuffer, mesh->second.index.buffer,
+                                              0, VK_INDEX_TYPE_UINT32);
+        deviceFunctions->vkCmdDrawIndexed(commandBuffer, mesh->second.indexCount, 1, 0, 0, 0);
+        ++stats.outlineDraws;
+    }
 
     deviceFunctions->vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, impl.meshPipeline);
     for (const auto& object : snapshot_.objects()) {

@@ -117,6 +117,7 @@ int main(int argc, char* argv[]) {
             const bool passed = viewport && viewport->vulkanActive() &&
                                 viewport->recordedFrameCount() > 0 &&
                                 viewport->recordedMeshDrawCount() > 0 &&
+                                viewport->recordedOutlineDrawCount() > 0 &&
                                 viewport->completedPickCount() > 0 &&
                                 viewport->successfulPickCount() > 0;
             app.exit(passed ? 0 : 4);
