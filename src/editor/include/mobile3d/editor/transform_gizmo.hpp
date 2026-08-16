@@ -25,6 +25,12 @@ enum class TransformConstraint {
     YZ,
 };
 
+enum class PivotMode {
+    Median,
+    Active,
+    IndividualOrigins,
+};
+
 struct GizmoBasis final {
     Vec3 x{1.0F, 0.0F, 0.0F};
     Vec3 y{0.0F, 1.0F, 0.0F};
