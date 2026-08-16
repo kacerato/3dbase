@@ -29,6 +29,12 @@ public:
                                    PivotMode pivotMode,
                                    TransformSnapSettings snapping = {});
     [[nodiscard]] bool updateRotation(float angleRadians);
+    [[nodiscard]] bool beginScale(EditorSession& session,
+                                  TransformSpace space,
+                                  TransformConstraint constraint,
+                                  PivotMode pivotMode,
+                                  TransformSnapSettings snapping = {});
+    [[nodiscard]] bool updateScale(float factor);
     [[nodiscard]] bool commit();
     [[nodiscard]] bool cancel();
 
