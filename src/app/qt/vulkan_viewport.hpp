@@ -1,5 +1,6 @@
 #pragma once
 
+#include "mobile3d/editor/transform_gizmo.hpp"
 #include "mobile3d/render/viewport_camera.hpp"
 
 #include <QMetaObject>
@@ -12,8 +13,10 @@
 
 #include <atomic>
 #include <cstdint>
+#include <optional>
 
 class EditorController;
+class QKeyEvent;
 class QMouseEvent;
 class QQuickWindow;
 class QTouchEvent;
@@ -50,6 +53,9 @@ public:
     [[nodiscard]] std::uint64_t recordedOutlineDrawCount() const noexcept {
         return recordedOutlineDrawCount_.load(std::memory_order_relaxed);
     }
+    [[nodiscard]] std::uint64_t recordedGizmoDrawCount() const noexcept {
+        return recordedGizmoDrawCount_.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] bool pipelineCacheLoaded() const noexcept {
         return pipelineCacheLoaded_.load(std::memory_order_relaxed);
     }
@@ -71,6 +77,7 @@ signals:
 
 protected:
     void releaseResources() override;
+    void keyPressEvent(QKeyEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
@@ -87,6 +94,10 @@ private:
     void orbitByPixels(QPointF delta);
     void panByPixels(QPointF delta);
     [[nodiscard]] float worldUnitsPerPixel() const noexcept;
+    [[nodiscard]] float worldUnitsPerPixelAt(m3d::Vec3 worldPoint) const noexcept;
+    [[nodiscard]] bool tryBeginGizmoTransform(QPointF position);
+    [[nodiscard]] bool updateGizmoTransform(QPointF position);
+    void finishGizmoTransform(bool commit);
     void cameraMutated();
     void scheduleNextFrame();
 
@@ -95,21 +106,34 @@ private:
     VulkanViewportRenderer* renderer_{nullptr};
     QMetaObject::Connection controllerProjectConnection_;
     QMetaObject::Connection controllerSelectionConnection_;
+    QMetaObject::Connection controllerTransformConnection_;
+    QMetaObject::Connection controllerTransformActivityConnection_;
     m3d::ViewportCamera camera_;
+    m3d::GizmoBasis transformDragBasis_{};
+    m3d::TransformConstraint transformDragConstraint_{m3d::TransformConstraint::Free};
+    m3d::Vec3 transformDragPivotWorld_{};
+    QPointF transformStartPosition_;
+    QPointF transformPivotScreen_;
+    QPointF transformAxisScreenUnit_;
     QPointF lastMousePosition_;
     QPointF mousePressPosition_;
     QPointF lastTouchCentroid_;
     QPointF touchStartCentroid_;
     QPointF pendingPickPosition_;
+    float transformAxisScreenLength_{1.0F};
+    float transformWorldSize_{1.0F};
+    float transformStartAngle_{0.0F};
     float lastTouchSpan_{0.0F};
     qsizetype lastTouchPointCount_{0};
     Qt::MouseButton navigationButton_{Qt::NoButton};
     std::atomic_uint64_t recordedFrameCount_{0};
     std::atomic_uint64_t recordedMeshDrawCount_{0};
     std::atomic_uint64_t recordedOutlineDrawCount_{0};
+    std::atomic_uint64_t recordedGizmoDrawCount_{0};
     std::atomic_bool pipelineCacheLoaded_{false};
     std::atomic_uint64_t completedPickCount_{0};
     std::atomic_uint64_t successfulPickCount_{0};
+    bool transformInteraction_{false};
     bool mouseDragExceeded_{false};
     bool touchDragExceeded_{false};
     bool pickRequested_{false};
