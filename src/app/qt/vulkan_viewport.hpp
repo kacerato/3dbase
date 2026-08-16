@@ -50,6 +50,9 @@ public:
     [[nodiscard]] std::uint64_t recordedOutlineDrawCount() const noexcept {
         return recordedOutlineDrawCount_.load(std::memory_order_relaxed);
     }
+    [[nodiscard]] bool pipelineCacheLoaded() const noexcept {
+        return pipelineCacheLoaded_.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] std::uint64_t completedPickCount() const noexcept {
         return completedPickCount_.load(std::memory_order_relaxed);
     }
@@ -104,6 +107,7 @@ private:
     std::atomic_uint64_t recordedFrameCount_{0};
     std::atomic_uint64_t recordedMeshDrawCount_{0};
     std::atomic_uint64_t recordedOutlineDrawCount_{0};
+    std::atomic_bool pipelineCacheLoaded_{false};
     std::atomic_uint64_t completedPickCount_{0};
     std::atomic_uint64_t successfulPickCount_{0};
     bool mouseDragExceeded_{false};

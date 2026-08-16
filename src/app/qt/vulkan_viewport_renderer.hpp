@@ -15,6 +15,7 @@ class QQuickWindow;
 struct VulkanRecordStats final {
     bool recorded{false};
     bool needsAnotherFrame{false};
+    bool pipelineCacheLoaded{false};
     std::uint32_t meshDraws{0};
     std::uint32_t outlineDraws{0};
 };

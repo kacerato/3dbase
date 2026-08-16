@@ -49,6 +49,8 @@ int main(int argc, char* argv[]) {
                                      QStringLiteral("--smoke-test")) != arguments.cend();
     const bool vulkanSmokeTest = std::find(arguments.cbegin(), arguments.cend(),
                                            QStringLiteral("--vulkan-smoke-test")) != arguments.cend();
+    const bool requirePipelineCache = std::find(arguments.cbegin(), arguments.cend(),
+                                                QStringLiteral("--require-pipeline-cache")) != arguments.cend();
 #if !defined(Q_OS_ANDROID)
     const bool requestedVulkan = std::find(arguments.cbegin(), arguments.cend(),
                                            QStringLiteral("--vulkan")) != arguments.cend();
@@ -112,14 +114,15 @@ int main(int argc, char* argv[]) {
                 viewport->requestPickAt(viewport->width() * 0.5, viewport->height() * 0.5);
             }
         });
-        QTimer::singleShot(2500, &app, [&app, root] {
+        QTimer::singleShot(2500, &app, [&app, root, requirePipelineCache] {
             auto* viewport = root->findChild<VulkanViewport*>(QStringLiteral("nativeVulkanViewport"));
             const bool passed = viewport && viewport->vulkanActive() &&
                                 viewport->recordedFrameCount() > 0 &&
                                 viewport->recordedMeshDrawCount() > 0 &&
                                 viewport->recordedOutlineDrawCount() > 0 &&
                                 viewport->completedPickCount() > 0 &&
-                                viewport->successfulPickCount() > 0;
+                                viewport->successfulPickCount() > 0 &&
+                                (!requirePipelineCache || viewport->pipelineCacheLoaded());
             app.exit(passed ? 0 : 4);
         });
     }

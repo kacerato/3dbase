@@ -295,6 +295,9 @@ void VulkanViewport::recordVulkanCommands() {
     if (stats.outlineDraws > 0) {
         recordedOutlineDrawCount_.fetch_add(stats.outlineDraws, std::memory_order_relaxed);
     }
+    if (stats.pipelineCacheLoaded) {
+        pipelineCacheLoaded_.store(true, std::memory_order_relaxed);
+    }
     if (stats.needsAnotherFrame) scheduleNextFrame();
 }
 

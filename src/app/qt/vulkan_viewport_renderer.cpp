@@ -4,7 +4,11 @@
 
 #include <QByteArray>
 #include <QDebug>
+#include <QDir>
+#include <QFile>
 #include <QQuickWindow>
+#include <QSaveFile>
+#include <QStandardPaths>
 #include <QSGRendererInterface>
 #include <QSize>
 #include <QVulkanDeviceFunctions>
@@ -361,6 +365,79 @@ VkPipelineColorBlendAttachmentState opaqueBlendState() {
     return state;
 }
 
+constexpr std::size_t kMaxPipelineCacheBytes = 64U * 1024U * 1024U;
+
+[[nodiscard]] QString pipelineCacheFilePath(QVulkanFunctions* functions,
+                                            VkPhysicalDevice physicalDevice) {
+    if (!functions || !physicalDevice) return {};
+    VkPhysicalDeviceProperties properties{};
+    functions->vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+    const QByteArray uuid(reinterpret_cast<const char*>(properties.pipelineCacheUUID), VK_UUID_SIZE);
+    const QString cacheRoot = QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    if (cacheRoot.isEmpty()) return {};
+    QDir directory(cacheRoot);
+    if (!directory.mkpath(QStringLiteral("vulkan"))) return {};
+    const QString fileName = QStringLiteral("pipeline-%1-%2-%3-%4.bin")
+        .arg(QString::number(properties.vendorID, 16),
+             QString::number(properties.deviceID, 16),
+             QString::number(properties.driverVersion, 16),
+             QString::fromLatin1(uuid.toHex()));
+    return directory.filePath(QStringLiteral("vulkan/") + fileName);
+}
+
+bool createPipelineCache(VulkanViewportRenderer::Impl& impl) {
+    impl.pipelineCachePath = pipelineCacheFilePath(impl.functions, impl.physicalDevice);
+    QByteArray initialData;
+    if (!impl.pipelineCachePath.isEmpty()) {
+        QFile file(impl.pipelineCachePath);
+        const qint64 size = file.size();
+        if (size > 0 && static_cast<std::uint64_t>(size) <= kMaxPipelineCacheBytes &&
+            file.open(QIODevice::ReadOnly)) {
+            initialData = file.readAll();
+        }
+    }
+
+    auto info = vkInfo<VkPipelineCacheCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO);
+    if (!initialData.isEmpty()) {
+        info.initialDataSize = static_cast<std::size_t>(initialData.size());
+        info.pInitialData = initialData.constData();
+    }
+    VkResult result = impl.deviceFunctions->vkCreatePipelineCache(
+        impl.device, &info, nullptr, &impl.pipelineCache);
+    if (result != VK_SUCCESS && !initialData.isEmpty()) {
+        info.initialDataSize = 0;
+        info.pInitialData = nullptr;
+        result = impl.deviceFunctions->vkCreatePipelineCache(
+            impl.device, &info, nullptr, &impl.pipelineCache);
+        initialData.clear();
+    }
+    if (result != VK_SUCCESS) return false;
+    impl.pipelineCacheLoaded = !initialData.isEmpty();
+    qInfo() << "Vulkan pipeline cache:" << (impl.pipelineCacheLoaded ? "loaded" : "cold")
+            << impl.pipelineCachePath;
+    return true;
+}
+
+bool persistPipelineCache(VulkanViewportRenderer::Impl& impl) {
+    if (!impl.deviceFunctions || !impl.device || !impl.pipelineCache ||
+        impl.pipelineCachePath.isEmpty()) return false;
+    std::size_t size = 0;
+    if (impl.deviceFunctions->vkGetPipelineCacheData(
+            impl.device, impl.pipelineCache, &size, nullptr) != VK_SUCCESS ||
+        size == 0 || size > kMaxPipelineCacheBytes) return false;
+
+    QByteArray data(static_cast<qsizetype>(size), '\0');
+    std::size_t writtenSize = size;
+    if (impl.deviceFunctions->vkGetPipelineCacheData(
+            impl.device, impl.pipelineCache, &writtenSize, data.data()) != VK_SUCCESS ||
+        writtenSize == 0 || writtenSize > size) return false;
+    data.resize(static_cast<qsizetype>(writtenSize));
+
+    QSaveFile file(impl.pipelineCachePath);
+    if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size()) return false;
+    return file.commit();
+}
+
 struct PipelineCommonState final {
     VkPipelineViewportStateCreateInfo viewport{};
     VkPipelineRasterizationStateCreateInfo raster{};
@@ -419,6 +496,9 @@ struct VulkanViewportRenderer::Impl final {
     VkPipeline meshPipeline{VK_NULL_HANDLE};
     VkPipelineLayout outlinePipelineLayout{VK_NULL_HANDLE};
     VkPipeline outlinePipeline{VK_NULL_HANDLE};
+    VkPipelineCache pipelineCache{VK_NULL_HANDLE};
+    QString pipelineCachePath;
+    bool pipelineCacheLoaded{false};
     std::unordered_map<m3d::ResourceId, GpuMesh, m3d::ResourceIdHash> meshCache;
     std::vector<FrameUploadGarbage> frameGarbage;
     PickTarget pickTarget;
@@ -547,7 +627,7 @@ bool createPipeline(VulkanViewportRenderer::Impl& impl,
     pipelineInfo.subpass = 0;
 
     const bool success = impl.deviceFunctions->vkCreateGraphicsPipelines(
-        impl.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) == VK_SUCCESS;
+        impl.device, impl.pipelineCache, 1, &pipelineInfo, nullptr, &pipeline) == VK_SUCCESS;
     impl.deviceFunctions->vkDestroyShaderModule(impl.device, vertexModule, nullptr);
     impl.deviceFunctions->vkDestroyShaderModule(impl.device, fragmentModule, nullptr);
     if (!success) {
@@ -885,12 +965,14 @@ void VulkanViewportRenderer::release() {
         destroyGpuMesh(impl, mesh);
     }
     impl.meshCache.clear();
+    (void)persistPipelineCache(impl);
     if (impl.outlinePipeline) impl.deviceFunctions->vkDestroyPipeline(impl.device, impl.outlinePipeline, nullptr);
     if (impl.outlinePipelineLayout) impl.deviceFunctions->vkDestroyPipelineLayout(impl.device, impl.outlinePipelineLayout, nullptr);
     if (impl.meshPipeline) impl.deviceFunctions->vkDestroyPipeline(impl.device, impl.meshPipeline, nullptr);
     if (impl.meshPipelineLayout) impl.deviceFunctions->vkDestroyPipelineLayout(impl.device, impl.meshPipelineLayout, nullptr);
     if (impl.linePipeline) impl.deviceFunctions->vkDestroyPipeline(impl.device, impl.linePipeline, nullptr);
     if (impl.linePipelineLayout) impl.deviceFunctions->vkDestroyPipelineLayout(impl.device, impl.linePipelineLayout, nullptr);
+    if (impl.pipelineCache) impl.deviceFunctions->vkDestroyPipelineCache(impl.device, impl.pipelineCache, nullptr);
     destroyBuffer(impl.deviceFunctions, impl.device, impl.gridBuffer);
     impl = Impl{};
 }
@@ -1105,7 +1187,7 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
         impl.functions = functions;
         impl.sampleCount = effectiveSampleCount;
         qInfo() << "Vulkan viewport effective MSAA samples:" << impl.sampleCount;
-        if (!createGridResources(impl) ||
+        if (!createPipelineCache(impl) || !createGridResources(impl) ||
             !createPipeline(impl, impl.renderPass, vulkanSampleCount(impl.sampleCount), true,
                             impl.linePipelineLayout, impl.linePipeline) ||
             !createPipeline(impl, impl.renderPass, vulkanSampleCount(impl.sampleCount), false,
@@ -1116,7 +1198,9 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
             release();
             return stats;
         }
+        (void)persistPipelineCache(impl);
     }
+    stats.pipelineCacheLoaded = impl.pipelineCacheLoaded;
     if (!meshCacheReady(impl, snapshot_)) {
         stats.needsAnotherFrame = true;
         return stats;
