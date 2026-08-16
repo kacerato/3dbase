@@ -8,6 +8,7 @@ add_executable(mobile3d_core_tests
     test_render_snapshot.cpp
     test_viewport_camera.cpp
     test_transform_gizmo.cpp
+    test_transform_manipulator.cpp
 )
 
 target_link_libraries(mobile3d_core_tests
