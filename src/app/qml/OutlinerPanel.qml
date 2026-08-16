@@ -54,18 +54,27 @@ Rectangle {
                 required property bool selected
                 required property bool active
                 required property bool hasChildren
-                required property bool visible
-                required property bool locked
+                required property bool objectVisible
+                required property bool objectLocked
 
                 width: ListView.view.width
                 height: 48
                 color: rowRoot.selected ? (rowRoot.active ? "#244b75" : "#20364f") : (mouseArea.pressed ? "#20242c" : "transparent")
+
+                MouseArea {
+                    id: mouseArea
+                    anchors.fill: parent
+                    z: 0
+                    onClicked: root.controller.selectObject(rowRoot.objectId, false)
+                    onPressAndHold: root.controller.selectObject(rowRoot.objectId, true)
+                }
 
                 RowLayout {
                     anchors.fill: parent
                     anchors.leftMargin: 10 + rowRoot.depth * 18
                     anchors.rightMargin: 8
                     spacing: 8
+                    z: 1
 
                     Label {
                         text: rowRoot.hasChildren ? "▸" : "·"
@@ -92,30 +101,18 @@ Rectangle {
                     }
 
                     ToolButton {
-                        id: visibilityButton
                         Layout.preferredWidth: 36
                         Layout.preferredHeight: 36
-                        text: rowRoot.visible ? "◉" : "○"
-                        onClicked: root.controller.setObjectVisible(rowRoot.objectId, !rowRoot.visible)
+                        text: rowRoot.objectVisible ? "◉" : "○"
+                        onClicked: root.controller.setObjectVisible(rowRoot.objectId, !rowRoot.objectVisible)
                     }
 
                     ToolButton {
-                        id: lockButton
                         Layout.preferredWidth: 36
                         Layout.preferredHeight: 36
-                        text: rowRoot.locked ? "🔒" : "🔓"
-                        onClicked: root.controller.setObjectLocked(rowRoot.objectId, !rowRoot.locked)
+                        text: rowRoot.objectLocked ? "🔒" : "🔓"
+                        onClicked: root.controller.setObjectLocked(rowRoot.objectId, !rowRoot.objectLocked)
                     }
-                }
-
-                MouseArea {
-                    id: mouseArea
-                    anchors.left: parent.left
-                    anchors.right: visibilityButton.left
-                    anchors.top: parent.top
-                    anchors.bottom: parent.bottom
-                    onClicked: root.controller.selectObject(rowRoot.objectId, false)
-                    onPressAndHold: root.controller.selectObject(rowRoot.objectId, true)
                 }
             }
 
