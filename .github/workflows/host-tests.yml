@@ -56,13 +56,18 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QT_QUICK_BACKEND: software
         run: ./build-qt/src/app/Mobile3DStudio --smoke-test
-      - name: Native Vulkan + embedded SPIR-V smoke test
+      - name: Native Vulkan + persistent pipeline cache smoke test
         shell: bash
         run: |
           VULKAN_ICD="$(find /usr/share/vulkan/icd.d -maxdepth 1 -type f -name 'lvp_icd*.json' | head -n 1)"
           test -n "$VULKAN_ICD"
           export VK_DRIVER_FILES="$VULKAN_ICD"
+          export XDG_CACHE_HOME="$RUNNER_TEMP/mobile3d-vulkan-cache"
+          rm -rf "$XDG_CACHE_HOME"
+          mkdir -p "$XDG_CACHE_HOME"
           xvfb-run -a ./build-qt/src/app/Mobile3DStudio --vulkan-smoke-test
+          find "$XDG_CACHE_HOME" -type f -name 'pipeline-*.bin' -size +0c -print -quit | grep -q .
+          xvfb-run -a ./build-qt/src/app/Mobile3DStudio --vulkan-smoke-test --require-pipeline-cache
 
   android-arm64:
     name: Android arm64 native cross-build
