@@ -54,6 +54,13 @@ Rectangle {
         }
 
         ToolButton {
+            visible: root.controller.projectOpen && !root.compact
+            enabled: root.controller.hasActiveObject && !root.controller.transformInProgress
+            text: "Duplicate"
+            onClicked: root.controller.duplicateSelection()
+        }
+
+        ToolButton {
             id: addButton
             visible: root.controller.projectOpen
             text: "Add"

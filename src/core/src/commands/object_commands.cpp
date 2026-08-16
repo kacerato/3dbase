@@ -1,6 +1,8 @@
 #include "mobile3d/core/commands/object_commands.hpp"
 
 #include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace m3d {
@@ -116,6 +118,134 @@ bool DeleteObjectCommand::undo() {
     if (scene_.restoreObjects(snapshot_)) return true;
     for (const auto id : inserted) (void)scene_.removeMeshResource(id);
     return false;
+}
+
+DuplicateObjectsCommand::DuplicateObjectsCommand(Scene& scene, std::vector<ObjectId> objects)
+    : scene_(scene), sources_(std::move(objects)) {}
+
+bool DuplicateObjectsCommand::initialize() {
+    if (sources_.empty()) return false;
+
+    std::unordered_set<ObjectId, ObjectIdHash> uniqueSources;
+    std::unordered_map<ObjectId, ObjectId, ObjectIdHash> objectMap;
+    for (const auto sourceId : sources_) {
+        if (!scene_.contains(sourceId) || !uniqueSources.insert(sourceId).second) return false;
+        ObjectId duplicateId;
+        do {
+            duplicateId = ObjectId::generate();
+        } while (scene_.contains(duplicateId) ||
+                 std::any_of(mappings_.cbegin(), mappings_.cend(),
+                             [duplicateId](const DuplicateObjectMapping& mapping) {
+                                 return mapping.duplicate == duplicateId;
+                             }));
+        mappings_.push_back({sourceId, duplicateId});
+        objectMap.emplace(sourceId, duplicateId);
+    }
+
+    std::unordered_map<ResourceId, ResourceId, ResourceIdHash> resourceMap;
+    for (const auto sourceId : sources_) {
+        const auto* sourceObject = scene_.find(sourceId);
+        if (!sourceObject) return false;
+        SceneObject duplicate = *sourceObject;
+        duplicate.id = objectMap.at(sourceId);
+        duplicate.name += " Copy";
+        if (duplicate.parent) {
+            const auto parentDuplicate = objectMap.find(*duplicate.parent);
+            if (parentDuplicate != objectMap.end()) duplicate.parent = parentDuplicate->second;
+        }
+
+        if (duplicate.meshResource) {
+            const ResourceId sourceResourceId = *duplicate.meshResource;
+            auto mappedResource = resourceMap.find(sourceResourceId);
+            if (mappedResource == resourceMap.end()) {
+                const auto* sourceResource = scene_.findMeshResource(sourceResourceId);
+                if (!sourceResource) return false;
+                MeshResource copiedResource = *sourceResource;
+                ResourceId duplicateResourceId;
+                do {
+                    duplicateResourceId = ResourceId::generate();
+                } while (scene_.containsResource(duplicateResourceId) ||
+                         std::any_of(resources_.cbegin(), resources_.cend(),
+                                     [duplicateResourceId](const MeshResource& resource) {
+                                         return resource.id == duplicateResourceId;
+                                     }));
+                copiedResource.id = duplicateResourceId;
+                copiedResource.name += " Copy";
+                std::string validationError;
+                if (!copiedResource.validate(&validationError)) return false;
+                resources_.push_back(std::move(copiedResource));
+                mappedResource = resourceMap.emplace(sourceResourceId, duplicateResourceId).first;
+            }
+            duplicate.meshResource = mappedResource->second;
+        }
+        objects_.push_back(std::move(duplicate));
+    }
+
+    initialized_ = true;
+    return true;
+}
+
+bool DuplicateObjectsCommand::insertPrepared() {
+    std::vector<ResourceId> insertedResources;
+    insertedResources.reserve(resources_.size());
+    for (const auto& resource : resources_) {
+        if (!scene_.insertMeshResource(resource)) {
+            rollbackInserted();
+            return false;
+        }
+        insertedResources.push_back(resource.id);
+    }
+
+    std::vector<bool> inserted(objects_.size(), false);
+    std::size_t insertedCount = 0;
+    while (insertedCount < objects_.size()) {
+        bool progressed = false;
+        for (std::size_t index = 0; index < objects_.size(); ++index) {
+            if (inserted[index]) continue;
+            const auto& object = objects_[index];
+            if (object.parent && !scene_.contains(*object.parent)) continue;
+            if (!scene_.insertObject(object)) {
+                rollbackInserted();
+                return false;
+            }
+            inserted[index] = true;
+            ++insertedCount;
+            progressed = true;
+        }
+        if (!progressed) {
+            rollbackInserted();
+            return false;
+        }
+    }
+    return true;
+}
+
+void DuplicateObjectsCommand::rollbackInserted() noexcept {
+    for (const auto& object : objects_) {
+        if (scene_.contains(object.id)) (void)scene_.removeSubtree(object.id);
+    }
+    for (const auto& resource : resources_) {
+        if (scene_.containsResource(resource.id)) (void)scene_.removeMeshResource(resource.id);
+    }
+}
+
+bool DuplicateObjectsCommand::execute() {
+    if (!initialized_ && !initialize()) return false;
+    return insertPrepared();
+}
+
+bool DuplicateObjectsCommand::undo() {
+    bool success = true;
+    for (const auto& object : objects_) {
+        if (!scene_.contains(object.id)) continue;
+        const auto removed = scene_.removeSubtree(object.id);
+        success = !removed.empty() && success;
+    }
+    for (const auto& resource : resources_) {
+        if (!scene_.containsResource(resource.id)) continue;
+        success = scene_.removeMeshResource(resource.id) && success;
+    }
+    return success;
 }
 
 RenameObjectCommand::RenameObjectCommand(Scene& scene, ObjectId object, std::string newName)

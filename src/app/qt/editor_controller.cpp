@@ -296,6 +296,13 @@ bool EditorController::deleteSelection() {
     return true;
 }
 
+bool EditorController::duplicateSelection() {
+    if (!session_.duplicateSelection()) return false;
+    setStatus(QStringLiteral("Selection duplicated."));
+    refreshUi();
+    return true;
+}
+
 bool EditorController::selectObject(const QString& objectId, bool toggle) {
     const auto parsed = m3d::ObjectId::fromString(objectId.toStdString());
     if (!parsed) {

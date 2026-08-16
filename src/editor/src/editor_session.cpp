@@ -187,6 +187,38 @@ bool EditorSession::deleteSelection() {
     return true;
 }
 
+bool EditorSession::duplicateSelection() {
+    if (transformTransaction_ || !document_ || selection_.empty()) return false;
+    const auto sources = selection_.selected();
+    const auto previousActive = selection_.active();
+    auto command = std::make_unique<DuplicateObjectsCommand>(document_->scene, sources);
+    auto* duplicateCommand = command.get();
+    if (!commands_.execute(std::move(command))) return false;
+
+    const auto mappings = duplicateCommand->mappings();
+    selection_.clear();
+    bool selectedAny = false;
+    std::optional<ObjectId> activeDuplicate;
+    for (const auto& mapping : mappings) {
+        if (previousActive && mapping.source == *previousActive) {
+            activeDuplicate = mapping.duplicate;
+            continue;
+        }
+        const auto mode = selectedAny ? SelectionMode::Add : SelectionMode::Replace;
+        selectedAny = selection_.select(document_->scene, mapping.duplicate, mode) || selectedAny;
+    }
+    if (activeDuplicate) {
+        const auto mode = selectedAny ? SelectionMode::Add : SelectionMode::Replace;
+        selectedAny = selection_.select(document_->scene, *activeDuplicate, mode) || selectedAny;
+    }
+    if (!selectedAny && !mappings.empty()) {
+        (void)selection_.select(document_->scene, mappings.front().duplicate, SelectionMode::Replace);
+    }
+    sceneMutated(false);
+    ++selectionRevision_;
+    return true;
+}
+
 bool EditorSession::renameObject(ObjectId object, std::string name) {
     if (transformTransaction_) return false;
     if (!document_ || !document_->scene.contains(object)) return false;

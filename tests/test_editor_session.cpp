@@ -244,3 +244,86 @@ TEST_CASE("cancelled transform transaction restores preview and does not create 
     REQUIRE(session.nextUndoName() == previousUndo);
     REQUIRE(!session.isDirty());
 }
+
+
+TEST_CASE("duplicate selection copies hierarchy and mesh resources in one undo step") {
+    const auto path = uniqueProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Duplicate Selection", &error));
+    const auto parent = session.createObject(m3d::ObjectType::Mesh, "Parent Mesh");
+    REQUIRE(parent.has_value());
+    const auto child = session.createObject(m3d::ObjectType::Empty, "Child", *parent);
+    REQUIRE(child.has_value());
+    const auto originalResource = session.scene()->find(*parent)->meshResource;
+    REQUIRE(originalResource.has_value());
+    REQUIRE(session.select(*parent, m3d::SelectionMode::Replace));
+    REQUIRE(session.select(*child, m3d::SelectionMode::Add));
+
+    REQUIRE(session.duplicateSelection());
+    REQUIRE(session.nextUndoName() == "Duplicate Selection");
+    REQUIRE(session.scene()->size() == 4);
+    REQUIRE(session.scene()->meshResources().size() == 2);
+    REQUIRE(session.selection().size() == 2);
+
+    std::optional<m3d::ObjectId> duplicateParent;
+    std::optional<m3d::ObjectId> duplicateChild;
+    for (const auto id : session.selection().selected()) {
+        const auto* object = session.scene()->find(id);
+        REQUIRE(object != nullptr);
+        if (object->type == m3d::ObjectType::Mesh) duplicateParent = id;
+        else if (object->name == "Child Copy") duplicateChild = id;
+    }
+    REQUIRE(duplicateParent.has_value());
+    REQUIRE(duplicateChild.has_value());
+    const auto* copiedParent = session.scene()->find(*duplicateParent);
+    const auto* copiedChild = session.scene()->find(*duplicateChild);
+    REQUIRE(copiedParent != nullptr);
+    REQUIRE(copiedChild != nullptr);
+    REQUIRE(copiedChild->parent == duplicateParent);
+    REQUIRE(copiedParent->meshResource.has_value());
+    REQUIRE(copiedParent->meshResource != originalResource);
+    const auto* originalGeometry = session.scene()->findMeshResource(*originalResource);
+    const auto* copiedGeometry = session.scene()->findMeshResource(*copiedParent->meshResource);
+    REQUIRE(originalGeometry != nullptr);
+    REQUIRE(copiedGeometry != nullptr);
+    REQUIRE(copiedGeometry->vertices == originalGeometry->vertices);
+    REQUIRE(copiedGeometry->indices == originalGeometry->indices);
+
+    REQUIRE(session.undo());
+    REQUIRE(session.scene()->size() == 2);
+    REQUIRE(session.scene()->meshResources().size() == 1);
+    REQUIRE(session.redo());
+    REQUIRE(session.scene()->size() == 4);
+    REQUIRE(session.scene()->meshResources().size() == 2);
+}
+
+TEST_CASE("duplicate shared selected mesh resource is copied once for the duplicate group") {
+    const auto path = uniqueProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Shared Duplicate", &error));
+    auto resource = m3d::MeshResource::makeCube("Shared", 1.0F);
+    const auto resourceId = session.scene()->createMeshResource(resource);
+    const auto first = session.scene()->createObject(m3d::ObjectType::Mesh, "First");
+    const auto second = session.scene()->createObject(m3d::ObjectType::Mesh, "Second");
+    REQUIRE(session.scene()->assignMesh(first, resourceId));
+    REQUIRE(session.scene()->assignMesh(second, resourceId));
+    REQUIRE(session.select(first, m3d::SelectionMode::Replace));
+    REQUIRE(session.select(second, m3d::SelectionMode::Add));
+
+    REQUIRE(session.duplicateSelection());
+    REQUIRE(session.scene()->meshResources().size() == 2);
+    std::optional<m3d::ResourceId> duplicateResource;
+    for (const auto id : session.selection().selected()) {
+        const auto* object = session.scene()->find(id);
+        REQUIRE(object != nullptr);
+        REQUIRE(object->meshResource.has_value());
+        if (!duplicateResource) duplicateResource = object->meshResource;
+        REQUIRE(object->meshResource == duplicateResource);
+    }
+    REQUIRE(duplicateResource.has_value());
+    REQUIRE(*duplicateResource != resourceId);
+}
