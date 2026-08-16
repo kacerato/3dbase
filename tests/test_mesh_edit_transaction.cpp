@@ -128,3 +128,54 @@ TEST_CASE("no-op mesh edit preserves the existing undo history") {
     REQUIRE(session.nextUndoName() == previousUndoName);
     REQUIRE(!session.isDirty());
 }
+
+TEST_CASE("mesh edit transaction blocks conflicting editor lifecycle operations") {
+    const auto path = meshEditProjectPath();
+    MeshEditCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Mesh Lifecycle", &error));
+    const auto object = session.createObject(m3d::ObjectType::Mesh, "Cube");
+    REQUIRE(object.has_value());
+    REQUIRE(session.saveProject(&error));
+
+    REQUIRE(session.beginMeshEdit(*object, &error));
+    const auto vertex = session.editableMesh()->vertices().front().id;
+    REQUIRE(session.selectMeshVertex(vertex));
+    REQUIRE(session.moveSelectedMeshVertices({0.25F, 0.0F, 0.0F}, &error));
+    REQUIRE(session.isDirty());
+
+    error.clear();
+    REQUIRE(!session.saveProject(&error));
+    REQUIRE(!error.empty());
+    error.clear();
+    REQUIRE(!session.writeAutosave(&error));
+    REQUIRE(!error.empty());
+    REQUIRE(!session.createObject(m3d::ObjectType::Empty, "Conflict").has_value());
+    REQUIRE(!session.duplicateSelection());
+    REQUIRE(!session.deleteSelection());
+    REQUIRE(!session.beginTransformTransaction({*object}, "Conflict"));
+    REQUIRE(!session.undo());
+    REQUIRE(!session.redo());
+
+    REQUIRE(session.cancelMeshEdit());
+    REQUIRE(!session.hasMeshEditTransaction());
+    REQUIRE(!session.isDirty());
+    error.clear();
+    REQUIRE(session.saveProject(&error));
+}
+
+TEST_CASE("closing a project always clears an active mesh edit transaction") {
+    const auto path = meshEditProjectPath();
+    MeshEditCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Mesh Close", &error));
+    const auto object = session.createObject(m3d::ObjectType::Mesh, "Cube");
+    REQUIRE(object.has_value());
+    REQUIRE(session.beginMeshEdit(*object, &error));
+    REQUIRE(session.hasMeshEditTransaction());
+    session.closeProject();
+    REQUIRE(!session.hasProject());
+    REQUIRE(!session.hasMeshEditTransaction());
+}
