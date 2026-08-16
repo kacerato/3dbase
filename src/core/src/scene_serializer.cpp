@@ -64,6 +64,27 @@ bool SceneSerializer::write(const std::filesystem::path& path, const Scene& scen
         }
     }
 
+    output << "collection_count " << scene.collectionCount() << '\n';
+    for (const auto& collection : scene.collections()) {
+        output << "collection " << std::quoted(collection.id.toString()) << ' '
+               << std::quoted(collection.name) << ' '
+               << (collection.visible ? 1 : 0) << ' '
+               << (collection.locked ? 1 : 0) << ' '
+               << collection.objects.size();
+        for (const auto object : collection.objects) output << ' ' << std::quoted(object.toString());
+        output << '\n';
+    }
+
+    output << "layer_count " << scene.layerCount() << '\n';
+    for (const auto& layer : scene.layers()) {
+        output << "layer " << std::quoted(layer.id.toString()) << ' '
+               << std::quoted(layer.name) << ' '
+               << (layer.enabled ? 1 : 0) << ' '
+               << layer.collections.size();
+        for (const auto collection : layer.collections) output << ' ' << std::quoted(collection.toString());
+        output << '\n';
+    }
+
     output << "count " << scene.size() << '\n';
     for (const auto& object : scene.objects()) {
         output << "object "
@@ -163,6 +184,78 @@ std::optional<Scene> SceneSerializer::read(const std::filesystem::path& path, st
         }
     }
 
+    std::vector<SceneCollection> decodedCollections;
+    std::vector<SceneLayer> decodedLayers;
+    if (version >= 3) {
+        std::string collectionCountKey;
+        std::size_t collectionCount = 0;
+        if (!(input >> collectionCountKey >> collectionCount) || collectionCountKey != "collection_count") {
+            if (error) *error = "Invalid scene collection count";
+            return std::nullopt;
+        }
+        decodedCollections.reserve(collectionCount);
+        for (std::size_t collectionIndex = 0; collectionIndex < collectionCount; ++collectionIndex) {
+            std::string record;
+            std::string idText;
+            int visible = 1;
+            int locked = 0;
+            std::size_t objectCount = 0;
+            SceneCollection collection;
+            if (!(input >> record >> std::quoted(idText) >> std::quoted(collection.name)
+                  >> visible >> locked >> objectCount) || record != "collection") {
+                if (error) *error = "Malformed collection record";
+                return std::nullopt;
+            }
+            const auto id = CollectionId::fromString(idText);
+            if (!id || id->isNull()) { if (error) *error = "Invalid collection id"; return std::nullopt; }
+            collection.id = *id;
+            collection.visible = visible != 0;
+            collection.locked = locked != 0;
+            collection.objects.reserve(objectCount);
+            for (std::size_t member = 0; member < objectCount; ++member) {
+                std::string objectText;
+                if (!(input >> std::quoted(objectText))) { if (error) *error = "Malformed collection membership"; return std::nullopt; }
+                const auto objectId = ObjectId::fromString(objectText);
+                if (!objectId || objectId->isNull()) { if (error) *error = "Invalid collection object id"; return std::nullopt; }
+                collection.objects.push_back(*objectId);
+            }
+            decodedCollections.push_back(std::move(collection));
+        }
+
+        std::string layerCountKey;
+        std::size_t layerCount = 0;
+        if (!(input >> layerCountKey >> layerCount) || layerCountKey != "layer_count") {
+            if (error) *error = "Invalid scene layer count";
+            return std::nullopt;
+        }
+        decodedLayers.reserve(layerCount);
+        for (std::size_t layerIndex = 0; layerIndex < layerCount; ++layerIndex) {
+            std::string record;
+            std::string idText;
+            int enabled = 1;
+            std::size_t collectionCount = 0;
+            SceneLayer layer;
+            if (!(input >> record >> std::quoted(idText) >> std::quoted(layer.name)
+                  >> enabled >> collectionCount) || record != "layer") {
+                if (error) *error = "Malformed layer record";
+                return std::nullopt;
+            }
+            const auto id = LayerId::fromString(idText);
+            if (!id || id->isNull()) { if (error) *error = "Invalid layer id"; return std::nullopt; }
+            layer.id = *id;
+            layer.enabled = enabled != 0;
+            layer.collections.reserve(collectionCount);
+            for (std::size_t member = 0; member < collectionCount; ++member) {
+                std::string collectionText;
+                if (!(input >> std::quoted(collectionText))) { if (error) *error = "Malformed layer membership"; return std::nullopt; }
+                const auto collectionId = CollectionId::fromString(collectionText);
+                if (!collectionId || collectionId->isNull()) { if (error) *error = "Invalid layer collection id"; return std::nullopt; }
+                layer.collections.push_back(*collectionId);
+            }
+            decodedLayers.push_back(std::move(layer));
+        }
+    }
+
     std::string countKey;
     std::size_t count = 0;
     if (!(input >> countKey >> count) || countKey != "count") {
@@ -240,6 +333,18 @@ std::optional<Scene> SceneSerializer::read(const std::filesystem::path& path, st
     if (!scene.restoreObjects(decoded)) {
         if (error) *error = "Scene hierarchy or resource references are invalid";
         return std::nullopt;
+    }
+    for (auto& collection : decodedCollections) {
+        if (!scene.insertCollection(std::move(collection))) {
+            if (error) *error = "Invalid collection or object membership";
+            return std::nullopt;
+        }
+    }
+    for (auto& layer : decodedLayers) {
+        if (!scene.insertLayer(std::move(layer))) {
+            if (error) *error = "Invalid layer or collection membership";
+            return std::nullopt;
+        }
     }
     return scene;
 }

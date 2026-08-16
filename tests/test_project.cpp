@@ -71,3 +71,31 @@ TEST_CASE("autosave is independent from the primary scene and recoverable") {
 
     std::filesystem::remove_all(path);
 }
+
+
+TEST_CASE("scene format v3 round trips collections layers and remains organization aware") {
+    const auto root = uniqueProjectPath();
+    ProjectCleanup cleanup(root);
+    std::filesystem::create_directories(root);
+    const auto file = root / "organization.m3scene";
+    m3d::Scene scene;
+    const auto object = scene.createObject(m3d::ObjectType::Empty, "Tree");
+    const auto collection = scene.createCollection("Nature");
+    const auto layer = scene.createLayer("Outdoor");
+    REQUIRE(scene.addObjectToCollection(collection, object));
+    REQUIRE(scene.addCollectionToLayer(layer, collection));
+    REQUIRE(scene.setCollectionLocked(collection, true));
+    REQUIRE(scene.setLayerEnabled(layer, true));
+    std::string error;
+    REQUIRE(m3d::SceneSerializer::write(file, scene, &error));
+    const auto loaded = m3d::SceneSerializer::read(file, &error);
+    REQUIRE(loaded.has_value());
+    REQUIRE(loaded->collectionCount() == 1);
+    REQUIRE(loaded->layerCount() == 1);
+    REQUIRE(loaded->findCollection(collection) != nullptr);
+    REQUIRE(loaded->findLayer(layer) != nullptr);
+    REQUIRE(loaded->findCollection(collection)->objects == std::vector<m3d::ObjectId>{object});
+    REQUIRE(loaded->findLayer(layer)->collections == std::vector<m3d::CollectionId>{collection});
+    REQUIRE(loaded->isObjectVisibleInLayer(object, layer));
+    REQUIRE(loaded->isObjectLockedByOrganization(object, layer));
+}

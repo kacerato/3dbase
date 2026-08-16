@@ -57,3 +57,40 @@ TEST_CASE("scene owns validated shareable mesh resources") {
     REQUIRE(scene.removeMeshResource(resource));
     REQUIRE(scene.meshResourceCount() == 0);
 }
+
+
+TEST_CASE("collections and layers are separate from transform hierarchy") {
+    m3d::Scene scene;
+    const auto a = scene.createObject(m3d::ObjectType::Empty, "A");
+    const auto b = scene.createObject(m3d::ObjectType::Empty, "B", a);
+    const auto collection = scene.createCollection("Environment");
+    const auto layer = scene.createLayer("Gameplay");
+    REQUIRE(!collection.isNull());
+    REQUIRE(!layer.isNull());
+    REQUIRE(scene.addObjectToCollection(collection, a));
+    REQUIRE(scene.addObjectToCollection(collection, b));
+    REQUIRE(scene.addCollectionToLayer(layer, collection));
+    REQUIRE(scene.find(b)->parent == a);
+    REQUIRE(scene.findCollection(collection)->objects.size() == 2);
+    REQUIRE(scene.findLayer(layer)->collections.size() == 1);
+    REQUIRE(scene.isObjectVisibleInLayer(a, layer));
+    REQUIRE(scene.setCollectionVisible(collection, false));
+    REQUIRE(!scene.isObjectVisibleInLayer(a, layer));
+    REQUIRE(scene.setCollectionVisible(collection, true));
+    REQUIRE(scene.setCollectionLocked(collection, true));
+    REQUIRE(scene.isObjectLockedByOrganization(b, layer));
+    REQUIRE(scene.removeCollection(collection));
+    REQUIRE(scene.findLayer(layer)->collections.empty());
+}
+
+TEST_CASE("removing objects cleans collection membership") {
+    m3d::Scene scene;
+    const auto parent = scene.createObject(m3d::ObjectType::Empty, "Parent");
+    const auto child = scene.createObject(m3d::ObjectType::Empty, "Child", parent);
+    const auto collection = scene.createCollection("Things");
+    REQUIRE(scene.addObjectToCollection(collection, parent));
+    REQUIRE(scene.addObjectToCollection(collection, child));
+    const auto removed = scene.removeSubtree(parent);
+    REQUIRE(removed.size() == 2);
+    REQUIRE(scene.findCollection(collection)->objects.empty());
+}
