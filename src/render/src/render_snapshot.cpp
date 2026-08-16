@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <functional>
 #include <limits>
 #include <unordered_map>
@@ -14,6 +15,7 @@ namespace {
 
 constexpr std::uint64_t kFnvOffset = 14695981039346656037ULL;
 constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+constexpr float kQuaternionEpsilon = 1.0e-8F;
 
 void hashWord(std::uint64_t& hash, std::uint32_t word) noexcept {
     for (unsigned int shift = 0; shift < 32U; shift += 8U) {
@@ -36,6 +38,28 @@ std::uint64_t meshContentHash(const MeshResource& mesh) noexcept {
     }
     for (const auto index : mesh.indices) hashWord(hash, index);
     return hash;
+}
+
+Quat normalizedQuaternion(Quat value) noexcept {
+    const float magnitudeSquared = value.x * value.x + value.y * value.y +
+                                   value.z * value.z + value.w * value.w;
+    if (magnitudeSquared <= kQuaternionEpsilon) return {};
+    const float inverseMagnitude = 1.0F / std::sqrt(magnitudeSquared);
+    return {
+        value.x * inverseMagnitude,
+        value.y * inverseMagnitude,
+        value.z * inverseMagnitude,
+        value.w * inverseMagnitude,
+    };
+}
+
+Quat multiplyQuaternion(Quat left, Quat right) noexcept {
+    return normalizedQuaternion({
+        left.w * right.x + left.x * right.w + left.y * right.z - left.z * right.y,
+        left.w * right.y - left.x * right.z + left.y * right.w + left.z * right.x,
+        left.w * right.z + left.x * right.y - left.y * right.x + left.z * right.w,
+        left.w * right.w - left.x * right.x - left.y * right.y - left.z * right.z,
+    });
 }
 
 } // namespace
@@ -109,6 +133,17 @@ RenderSceneSnapshot RenderSnapshotBuilder::build(const Scene& scene,
         return world;
     };
 
+    std::unordered_map<ObjectId, Quat, ObjectIdHash> rotationCache;
+    std::function<Quat(ObjectId)> resolveWorldRotation = [&](ObjectId id) -> Quat {
+        if (const auto found = rotationCache.find(id); found != rotationCache.end()) return found->second;
+        const auto* object = scene.find(id);
+        if (!object) return {};
+        Quat rotation = normalizedQuaternion(object->localTransform.rotation);
+        if (object->parent) rotation = multiplyQuaternion(resolveWorldRotation(*object->parent), rotation);
+        rotationCache.emplace(id, rotation);
+        return rotation;
+    };
+
     const auto active = selection.active();
     std::vector<RenderObjectSnapshot> snapshots;
     snapshots.reserve(authoredObjects.size());
@@ -123,6 +158,7 @@ RenderSceneSnapshot RenderSnapshotBuilder::build(const Scene& scene,
             .type = object.type,
             .localTransform = object.localTransform,
             .worldTransform = resolveWorld(object.id),
+            .worldRotation = resolveWorldRotation(object.id),
             .parent = object.parent,
             .meshResource = object.meshResource,
             .visible = object.visible,
