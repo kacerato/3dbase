@@ -37,6 +37,58 @@ Rectangle {
 
         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#252a33" }
 
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 92
+            Layout.leftMargin: 6
+            Layout.rightMargin: 6
+            spacing: 4
+
+            RowLayout {
+                Layout.fillWidth: true
+                ComboBox {
+                    id: collectionBox
+                    Layout.fillWidth: true
+                    model: root.controller.collectionNames
+                    displayText: currentText.length > 0 ? currentText : "Collections"
+                }
+                ToolButton { text: "+C"; onClicked: root.controller.createCollection() }
+                ToolButton {
+                    text: "Add"
+                    enabled: collectionBox.currentText.length > 0
+                    onClicked: root.controller.addSelectionToCollection(collectionBox.currentText)
+                }
+                ToolButton {
+                    text: "◉"
+                    enabled: collectionBox.currentText.length > 0
+                    onClicked: root.controller.toggleCollectionVisible(collectionBox.currentText)
+                }
+                ToolButton {
+                    text: "🔒"
+                    enabled: collectionBox.currentText.length > 0
+                    onClicked: root.controller.toggleCollectionLocked(collectionBox.currentText)
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                ComboBox {
+                    id: layerBox
+                    Layout.fillWidth: true
+                    model: root.controller.layerNames
+                    onActivated: root.controller.setActiveLayer(currentText)
+                }
+                ToolButton { text: "+L"; onClicked: root.controller.createLayer() }
+                ToolButton {
+                    text: "Link"
+                    enabled: collectionBox.currentText.length > 0 && layerBox.currentText !== "All"
+                    onClicked: root.controller.addCollectionToLayer(collectionBox.currentText, layerBox.currentText)
+                }
+            }
+        }
+
+        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#252a33" }
+
         ListView {
             id: list
             Layout.fillWidth: true

@@ -46,9 +46,9 @@ QVariant OutlinerModel::data(const QModelIndex& index, int role) const {
     case HasChildrenRole:
         return row.hasChildren;
     case VisibleRole:
-        return object->visible;
+        return scene->isObjectVisibleInLayer(row.id, session_.activeLayer());
     case LockedRole:
-        return object->locked;
+        return scene->isObjectLockedByOrganization(row.id, session_.activeLayer());
     default:
         return {};
     }

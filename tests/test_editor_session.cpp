@@ -374,3 +374,33 @@ TEST_CASE("locked objects remain inspectable but reject editor mutations") {
     REQUIRE(!session.scene()->find(*object)->locked);
     REQUIRE(session.transformObject(*object, transform));
 }
+
+TEST_CASE("active layer gates organization locks and collection membership is undoable") {
+    const auto path = uniqueProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Organization", &error));
+    const auto object = session.createObject(m3d::ObjectType::Empty, "Object");
+    REQUIRE(object.has_value());
+    REQUIRE(session.select(*object, m3d::SelectionMode::Replace));
+
+    const auto collection = session.createCollection("Locked");
+    const auto layer = session.createLayer("Layer");
+    REQUIRE(collection.has_value());
+    REQUIRE(layer.has_value());
+    REQUIRE(session.addSelectionToCollection(*collection));
+    REQUIRE(session.addCollectionToLayer(*layer, *collection));
+    REQUIRE(session.setCollectionLocked(*collection, true));
+    REQUIRE(session.setActiveLayer(*layer));
+    REQUIRE(!session.beginTransformTransaction({*object}, "Move"));
+
+    REQUIRE(session.setCollectionLocked(*collection, false));
+    REQUIRE(session.beginTransformTransaction({*object}, "Move"));
+    REQUIRE(session.cancelTransformTransaction());
+
+    REQUIRE(session.undo());
+    REQUIRE(session.scene()->findCollection(*collection)->locked);
+    REQUIRE(session.redo());
+    REQUIRE(!session.scene()->findCollection(*collection)->locked);
+}

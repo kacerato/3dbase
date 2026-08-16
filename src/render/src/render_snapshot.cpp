@@ -95,7 +95,8 @@ const RenderMeshSnapshot* RenderSceneSnapshot::findMesh(ResourceId id) const noe
 RenderSceneSnapshot RenderSnapshotBuilder::build(const Scene& scene,
                                                  const SelectionModel& selection,
                                                  std::uint64_t sceneRevision,
-                                                 std::uint64_t selectionRevision) {
+                                                 std::uint64_t selectionRevision,
+                                                 std::optional<LayerId> activeLayer) {
     auto authoredObjects = scene.objects();
     std::sort(authoredObjects.begin(), authoredObjects.end(),
               [](const SceneObject& left, const SceneObject& right) {
@@ -161,8 +162,8 @@ RenderSceneSnapshot RenderSnapshotBuilder::build(const Scene& scene,
             .worldRotation = resolveWorldRotation(object.id),
             .parent = object.parent,
             .meshResource = object.meshResource,
-            .visible = object.visible,
-            .locked = object.locked,
+            .visible = scene.isObjectVisibleInLayer(object.id, activeLayer),
+            .locked = scene.isObjectLockedByOrganization(object.id, activeLayer),
             .selected = selection.contains(object.id),
             .active = active && *active == object.id,
         });

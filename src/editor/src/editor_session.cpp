@@ -45,6 +45,7 @@ bool EditorSession::openProject(const std::filesystem::path& root, std::string* 
 
 void EditorSession::closeProject() noexcept {
     transformTransaction_.reset();
+    activeLayer_.reset();
     document_.reset();
     commands_.clear();
     selection_.clear();
@@ -92,6 +93,7 @@ bool EditorSession::recoverAutosave(std::string* error) {
     commands_.clear();
     commands_.markSaved();
     selection_.clear();
+    activeLayer_.reset();
     recoveredDirty_ = true;
     ++sceneRevision_;
     ++selectionRevision_;
@@ -106,6 +108,17 @@ bool EditorSession::discardAutosave(std::string* error) {
 
 bool EditorSession::isDirty() const noexcept {
     return recoveredDirty_ || commands_.isDirty() || transformTransactionHasChanges();
+}
+
+bool EditorSession::setActiveLayer(std::optional<LayerId> layer) {
+    if (!document_ || transformTransaction_) return false;
+    if (layer && !document_->scene.containsLayer(*layer)) return false;
+    if (activeLayer_ == layer) return true;
+    activeLayer_ = layer;
+    pruneSelectionForActiveLayer();
+    ++sceneRevision_;
+    ++uiRevision_;
+    return true;
 }
 
 const ProjectDocument* EditorSession::document() const noexcept { return document_ ? &*document_ : nullptr; }
@@ -150,7 +163,7 @@ bool EditorSession::deleteObject(ObjectId object) {
     if (transformTransaction_) return false;
     if (!document_ || !document_->scene.contains(object)) return false;
     const auto* target = document_->scene.find(object);
-    if (!target || target->locked) return false;
+    if (!target || objectLockedByActiveLayer(object)) return false;
     if (!commands_.execute(std::make_unique<DeleteObjectCommand>(document_->scene, object))) return false;
     sceneMutated(true);
     return true;
@@ -161,7 +174,7 @@ bool EditorSession::deleteSelection() {
     if (!document_ || selection_.empty()) return false;
     for (const auto id : selection_.selected()) {
         const auto* object = document_->scene.find(id);
-        if (!object || object->locked) return false;
+        if (!object || objectLockedByActiveLayer(id)) return false;
     }
     std::vector<ObjectId> roots;
     roots.reserve(selection_.size());
@@ -197,7 +210,7 @@ bool EditorSession::duplicateSelection() {
     if (transformTransaction_ || !document_ || selection_.empty()) return false;
     for (const auto id : selection_.selected()) {
         const auto* object = document_->scene.find(id);
-        if (!object || object->locked) return false;
+        if (!object || objectLockedByActiveLayer(id)) return false;
     }
     const auto sources = selection_.selected();
     const auto previousActive = selection_.active();
@@ -257,7 +270,7 @@ bool EditorSession::renameObject(ObjectId object, std::string name) {
     if (transformTransaction_) return false;
     if (!document_ || !document_->scene.contains(object)) return false;
     const auto* current = document_->scene.find(object);
-    if (!current || current->locked) return false;
+    if (!current || objectLockedByActiveLayer(object)) return false;
     if (!commands_.execute(std::make_unique<RenameObjectCommand>(document_->scene, object, std::move(name)))) return false;
     sceneMutated(false);
     return true;
@@ -267,7 +280,7 @@ bool EditorSession::transformObject(ObjectId object, const Transform& transform)
     if (transformTransaction_) return false;
     if (!document_ || !document_->scene.contains(object)) return false;
     const auto* current = document_->scene.find(object);
-    if (!current || current->locked) return false;
+    if (!current || objectLockedByActiveLayer(object)) return false;
     if (!commands_.execute(std::make_unique<TransformObjectCommand>(document_->scene, object, transform))) return false;
     sceneMutated(false);
     return true;
@@ -281,7 +294,7 @@ bool EditorSession::beginTransformTransaction(const std::vector<ObjectId>& objec
     transaction.changes.reserve(objects.size());
     for (const auto objectId : objects) {
         const auto* object = document_->scene.find(objectId);
-        if (!object || object->locked) return false;
+        if (!object || objectLockedByActiveLayer(objectId)) return false;
         const auto duplicate = std::find_if(transaction.changes.cbegin(), transaction.changes.cend(),
                                             [objectId](const TransformChange& change) {
                                                 return change.object == objectId;
@@ -351,7 +364,7 @@ bool EditorSession::reparentObject(ObjectId object, std::optional<ObjectId> pare
     if (transformTransaction_) return false;
     if (!document_ || !document_->scene.contains(object)) return false;
     const auto* current = document_->scene.find(object);
-    if (!current || current->locked) return false;
+    if (!current || objectLockedByActiveLayer(object)) return false;
     if (!commands_.execute(std::make_unique<ReparentObjectCommand>(document_->scene, object, parent))) return false;
     sceneMutated(false);
     return true;
@@ -368,6 +381,126 @@ void EditorSession::clearSelection() noexcept {
     if (transformTransaction_ || selection_.empty()) return;
     selection_.clear();
     ++selectionRevision_;
+}
+
+std::optional<CollectionId> EditorSession::createCollection(std::string name) {
+    if (!document_ || transformTransaction_ || name.empty()) return std::nullopt;
+    auto command = std::make_unique<CreateCollectionCommand>(document_->scene, std::move(name));
+    auto* created = command.get();
+    if (!commands_.execute(std::move(command))) return std::nullopt;
+    const auto id = created->createdId();
+    sceneMutated(false);
+    return id;
+}
+
+bool EditorSession::deleteCollection(CollectionId collection) {
+    if (!document_ || transformTransaction_ || !document_->scene.containsCollection(collection)) return false;
+    if (!commands_.execute(std::make_unique<DeleteCollectionCommand>(document_->scene, collection))) return false;
+    pruneSelectionForActiveLayer();
+    sceneMutated(false);
+    return true;
+}
+
+bool EditorSession::renameCollection(CollectionId collection, std::string name) {
+    if (!document_ || transformTransaction_ || name.empty()) return false;
+    if (!commands_.execute(std::make_unique<RenameCollectionCommand>(document_->scene, collection, std::move(name)))) return false;
+    sceneMutated(false);
+    return true;
+}
+
+bool EditorSession::setCollectionVisible(CollectionId collection, bool visible) {
+    if (!document_ || transformTransaction_) return false;
+    const auto* value = document_->scene.findCollection(collection);
+    if (!value || value->visible == visible) return false;
+    if (!commands_.execute(std::make_unique<SetCollectionVisibilityCommand>(document_->scene, collection, visible))) return false;
+    pruneSelectionForActiveLayer();
+    sceneMutated(false);
+    return true;
+}
+
+bool EditorSession::setCollectionLocked(CollectionId collection, bool locked) {
+    if (!document_ || transformTransaction_) return false;
+    const auto* value = document_->scene.findCollection(collection);
+    if (!value || value->locked == locked) return false;
+    if (!commands_.execute(std::make_unique<SetCollectionLockedCommand>(document_->scene, collection, locked))) return false;
+    sceneMutated(false);
+    return true;
+}
+
+bool EditorSession::addSelectionToCollection(CollectionId collection) {
+    if (!document_ || transformTransaction_ || selection_.empty()) return false;
+    const auto* value = document_->scene.findCollection(collection);
+    if (!value) return false;
+    auto transaction = std::make_unique<CompositeCommand>("Add Selection to Collection");
+    std::size_t added = 0;
+    for (const auto object : selection_.selected()) {
+        if (std::find(value->objects.cbegin(), value->objects.cend(), object) != value->objects.cend()) continue;
+        transaction->add(std::make_unique<AddObjectToCollectionCommand>(document_->scene, collection, object));
+        ++added;
+    }
+    if (added == 0) return false;
+    if (!commands_.execute(std::move(transaction))) return false;
+    sceneMutated(false);
+    return true;
+}
+
+bool EditorSession::removeObjectFromCollection(CollectionId collection, ObjectId object) {
+    if (!document_ || transformTransaction_) return false;
+    if (!commands_.execute(std::make_unique<RemoveObjectFromCollectionCommand>(document_->scene, collection, object))) return false;
+    sceneMutated(false);
+    return true;
+}
+
+std::optional<LayerId> EditorSession::createLayer(std::string name) {
+    if (!document_ || transformTransaction_ || name.empty()) return std::nullopt;
+    auto command = std::make_unique<CreateLayerCommand>(document_->scene, std::move(name));
+    auto* created = command.get();
+    if (!commands_.execute(std::move(command))) return std::nullopt;
+    const auto id = created->createdId();
+    sceneMutated(false);
+    return id;
+}
+
+bool EditorSession::deleteLayer(LayerId layer) {
+    if (!document_ || transformTransaction_ || !document_->scene.containsLayer(layer)) return false;
+    if (!commands_.execute(std::make_unique<DeleteLayerCommand>(document_->scene, layer))) return false;
+    if (activeLayer_ && *activeLayer_ == layer) activeLayer_.reset();
+    pruneSelectionForActiveLayer();
+    sceneMutated(false);
+    return true;
+}
+
+bool EditorSession::renameLayer(LayerId layer, std::string name) {
+    if (!document_ || transformTransaction_ || name.empty()) return false;
+    if (!commands_.execute(std::make_unique<RenameLayerCommand>(document_->scene, layer, std::move(name)))) return false;
+    sceneMutated(false);
+    return true;
+}
+
+bool EditorSession::setLayerEnabled(LayerId layer, bool enabled) {
+    if (!document_ || transformTransaction_) return false;
+    const auto* value = document_->scene.findLayer(layer);
+    if (!value || value->enabled == enabled) return false;
+    if (!commands_.execute(std::make_unique<SetLayerEnabledCommand>(document_->scene, layer, enabled))) return false;
+    pruneSelectionForActiveLayer();
+    sceneMutated(false);
+    return true;
+}
+
+bool EditorSession::addCollectionToLayer(LayerId layer, CollectionId collection) {
+    if (!document_ || transformTransaction_) return false;
+    if (!commands_.execute(std::make_unique<AddCollectionToLayerCommand>(document_->scene, layer, collection))) return false;
+    pruneSelectionForActiveLayer();
+    sceneMutated(false);
+    return true;
+}
+
+bool EditorSession::removeCollectionFromLayer(LayerId layer, CollectionId collection) {
+    if (!document_ || transformTransaction_) return false;
+    if (!commands_.execute(std::make_unique<RemoveCollectionFromLayerCommand>(document_->scene, layer, collection))) return false;
+    pruneSelectionForActiveLayer();
+    sceneMutated(false);
+    return true;
 }
 
 bool EditorSession::undo() {
@@ -396,6 +529,21 @@ bool EditorSession::requireProject(std::string* error) const {
     return false;
 }
 
+bool EditorSession::objectLockedByActiveLayer(ObjectId object) const noexcept {
+    return !document_ || document_->scene.isObjectLockedByOrganization(object, activeLayer_);
+}
+
+void EditorSession::pruneSelectionForActiveLayer() {
+    if (!document_ || selection_.empty()) return;
+    const auto selected = selection_.selected();
+    bool changed = false;
+    for (const auto object : selected) {
+        if (document_->scene.isObjectVisibleInLayer(object, activeLayer_)) continue;
+        changed = selection_.remove(object) || changed;
+    }
+    if (changed) ++selectionRevision_;
+}
+
 bool EditorSession::transformTransactionHasChanges() const noexcept {
     if (!transformTransaction_) return false;
     return std::any_of(transformTransaction_->changes.cbegin(), transformTransaction_->changes.cend(),
@@ -404,6 +552,7 @@ bool EditorSession::transformTransactionHasChanges() const noexcept {
 
 void EditorSession::resetForDocument(bool recoveredDirty) noexcept {
     transformTransaction_.reset();
+    activeLayer_.reset();
     commands_.clear();
     commands_.markSaved();
     selection_.clear();

@@ -6,6 +6,7 @@ add_library(mobile3d_core STATIC
     src/composite_command.cpp
     src/selection_model.cpp
     src/commands/object_commands.cpp
+    src/commands/organization_commands.cpp
     src/project_manifest.cpp
     src/scene_serializer.cpp
     src/project_repository.cpp

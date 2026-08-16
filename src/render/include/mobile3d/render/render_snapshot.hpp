@@ -66,7 +66,8 @@ public:
     [[nodiscard]] static RenderSceneSnapshot build(const Scene& scene,
                                                    const SelectionModel& selection,
                                                    std::uint64_t sceneRevision,
-                                                   std::uint64_t selectionRevision);
+                                                   std::uint64_t selectionRevision,
+                                                   std::optional<LayerId> activeLayer = std::nullopt);
 };
 
 } // namespace m3d

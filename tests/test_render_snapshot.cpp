@@ -113,3 +113,24 @@ TEST_CASE("render snapshot ordering and pick ids do not inherit unordered scene 
     REQUIRE(snapshot.findPickId(1U)->id == lowId);
     REQUIRE(snapshot.findPickId(2U)->id == highId);
 }
+
+TEST_CASE("render snapshot applies active layer organization state") {
+    m3d::Scene scene;
+    m3d::SelectionModel selection;
+    const auto visible = scene.createObject(m3d::ObjectType::Empty, "Visible");
+    const auto hidden = scene.createObject(m3d::ObjectType::Empty, "Hidden");
+    const auto visibleCollection = scene.createCollection("Visible Collection");
+    const auto hiddenCollection = scene.createCollection("Hidden Collection");
+    const auto layer = scene.createLayer("Layer");
+    REQUIRE(scene.addObjectToCollection(visibleCollection, visible));
+    REQUIRE(scene.addObjectToCollection(hiddenCollection, hidden));
+    REQUIRE(scene.addCollectionToLayer(layer, visibleCollection));
+    REQUIRE(scene.setCollectionLocked(visibleCollection, true));
+
+    const auto snapshot = m3d::RenderSnapshotBuilder::build(scene, selection, 1, 1, layer);
+    REQUIRE(snapshot.find(visible) != nullptr);
+    REQUIRE(snapshot.find(hidden) != nullptr);
+    REQUIRE(snapshot.find(visible)->visible);
+    REQUIRE(snapshot.find(visible)->locked);
+    REQUIRE(!snapshot.find(hidden)->visible);
+}

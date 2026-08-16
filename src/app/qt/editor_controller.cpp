@@ -147,6 +147,32 @@ QString EditorController::pivotMode() const {
     return QStringLiteral("Median");
 }
 
+QString EditorController::activeLayerName() const {
+    const auto active = session_.activeLayer();
+    if (!active) return QStringLiteral("All");
+    const auto* scene = session_.scene();
+    const auto* layer = scene ? scene->findLayer(*active) : nullptr;
+    return layer ? QString::fromStdString(layer->name) : QStringLiteral("All");
+}
+
+QStringList EditorController::layerNames() const {
+    QStringList values{QStringLiteral("All")};
+    const auto* scene = session_.scene();
+    if (!scene) return values;
+    for (const auto& layer : scene->layers()) values.push_back(QString::fromStdString(layer.name));
+    if (values.size() > 2) std::sort(values.begin() + 1, values.end());
+    return values;
+}
+
+QStringList EditorController::collectionNames() const {
+    QStringList values;
+    const auto* scene = session_.scene();
+    if (!scene) return values;
+    for (const auto& collection : scene->collections()) values.push_back(QString::fromStdString(collection.name));
+    std::sort(values.begin(), values.end());
+    return values;
+}
+
 m3d::TransformSnapSettings EditorController::transformSnapSettings() const noexcept {
     m3d::TransformSnapSettings settings;
     settings.translationEnabled = transformSnapEnabled_;
@@ -447,6 +473,125 @@ bool EditorController::setPivotMode(const QString& name) {
     pivotMode_ = *value;
     emit transformSettingsChanged();
     return true;
+}
+
+bool EditorController::setActiveLayer(const QString& name) {
+    if (!session_.hasProject() || manipulator_.active()) return false;
+    const QString cleaned = name.trimmed();
+    if (cleaned.compare(QStringLiteral("All"), Qt::CaseInsensitive) == 0) {
+        if (!session_.setActiveLayer(std::nullopt)) return false;
+        setStatus(QStringLiteral("Layer: All"));
+        outliner_->refresh();
+        emit selectionChanged();
+        emit layerChanged();
+        return true;
+    }
+    const auto* scene = session_.scene();
+    if (!scene) return false;
+    for (const auto& layer : scene->layers()) {
+        if (QString::fromStdString(layer.name).compare(cleaned, Qt::CaseInsensitive) != 0) continue;
+        if (!session_.setActiveLayer(layer.id)) return false;
+        setStatus(QStringLiteral("Layer: %1").arg(QString::fromStdString(layer.name)));
+        outliner_->refresh();
+        emit selectionChanged();
+        emit layerChanged();
+        return true;
+    }
+    return false;
+}
+
+bool EditorController::createCollection() {
+    auto* scene = session_.scene();
+    if (!scene || manipulator_.active()) return false;
+    int suffix = static_cast<int>(scene->collectionCount()) + 1;
+    std::string name;
+    for (;;) {
+        name = "Collection " + std::to_string(suffix++);
+        const auto duplicate = std::any_of(scene->collections().cbegin(), scene->collections().cend(), [&name](const m3d::SceneCollection& item) {
+            return item.name == name;
+        });
+        if (!duplicate) break;
+    }
+    if (!session_.createCollection(name)) return false;
+    setStatus(QStringLiteral("Collection created."));
+    refreshUi();
+    return true;
+}
+
+bool EditorController::createLayer() {
+    auto* scene = session_.scene();
+    if (!scene || manipulator_.active()) return false;
+    int suffix = static_cast<int>(scene->layerCount()) + 1;
+    std::string name;
+    for (;;) {
+        name = "Layer " + std::to_string(suffix++);
+        const auto duplicate = std::any_of(scene->layers().cbegin(), scene->layers().cend(), [&name](const m3d::SceneLayer& item) {
+            return item.name == name;
+        });
+        if (!duplicate) break;
+    }
+    const auto created = session_.createLayer(name);
+    if (!created) return false;
+    (void)session_.setActiveLayer(*created);
+    setStatus(QStringLiteral("Layer created."));
+    refreshUi();
+    emit layerChanged();
+    return true;
+}
+
+bool EditorController::addSelectionToCollection(const QString& collectionName) {
+    auto* scene = session_.scene();
+    if (!scene) return false;
+    for (const auto& collection : scene->collections()) {
+        if (QString::fromStdString(collection.name) != collectionName) continue;
+        if (!session_.addSelectionToCollection(collection.id)) return false;
+        setStatus(QStringLiteral("Selection added to %1.").arg(collectionName));
+        refreshUi();
+        return true;
+    }
+    return false;
+}
+
+bool EditorController::addCollectionToLayer(const QString& collectionName, const QString& layerName) {
+    auto* scene = session_.scene();
+    if (!scene || layerName == QStringLiteral("All")) return false;
+    std::optional<m3d::CollectionId> collectionId;
+    std::optional<m3d::LayerId> layerId;
+    for (const auto& collection : scene->collections()) {
+        if (QString::fromStdString(collection.name) == collectionName) collectionId = collection.id;
+    }
+    for (const auto& layer : scene->layers()) {
+        if (QString::fromStdString(layer.name) == layerName) layerId = layer.id;
+    }
+    if (!collectionId || !layerId || !session_.addCollectionToLayer(*layerId, *collectionId)) return false;
+    setStatus(QStringLiteral("Collection linked to layer."));
+    refreshUi();
+    emit layerChanged();
+    return true;
+}
+
+bool EditorController::toggleCollectionVisible(const QString& collectionName) {
+    auto* scene = session_.scene();
+    if (!scene) return false;
+    for (const auto& collection : scene->collections()) {
+        if (QString::fromStdString(collection.name) != collectionName) continue;
+        if (!session_.setCollectionVisible(collection.id, !collection.visible)) return false;
+        refreshUi();
+        return true;
+    }
+    return false;
+}
+
+bool EditorController::toggleCollectionLocked(const QString& collectionName) {
+    auto* scene = session_.scene();
+    if (!scene) return false;
+    for (const auto& collection : scene->collections()) {
+        if (QString::fromStdString(collection.name) != collectionName) continue;
+        if (!session_.setCollectionLocked(collection.id, !collection.locked)) return false;
+        refreshUi();
+        return true;
+    }
+    return false;
 }
 
 void EditorController::setTransformSnapEnabled(bool enabled) {

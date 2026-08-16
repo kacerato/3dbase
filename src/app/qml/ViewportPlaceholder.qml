@@ -103,6 +103,16 @@ Rectangle {
         }
         Button {
             height: 36
+            text: "Layer: " + root.controller.activeLayerName
+            enabled: !root.controller.transformInProgress
+            onClicked: {
+                const names = root.controller.layerNames
+                const current = Math.max(0, names.indexOf(root.controller.activeLayerName))
+                root.controller.setActiveLayer(names[(current + 1) % names.length])
+            }
+        }
+        Button {
+            height: 36
             text: root.controller.transformSnapEnabled ? "Snap On" : "Snap Off"
             highlighted: root.controller.transformSnapEnabled
             enabled: !root.controller.transformInProgress

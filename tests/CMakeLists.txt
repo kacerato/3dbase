@@ -2,6 +2,7 @@ add_executable(mobile3d_core_tests
     test_main.cpp
     test_scene.cpp
     test_commands.cpp
+    test_organization.cpp
     test_selection.cpp
     test_project.cpp
     test_editor_session.cpp

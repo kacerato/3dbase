@@ -41,6 +41,9 @@ class EditorController final : public QObject {
     Q_PROPERTY(QString transformTool READ transformTool NOTIFY transformSettingsChanged)
     Q_PROPERTY(QString transformSpace READ transformSpace NOTIFY transformSettingsChanged)
     Q_PROPERTY(QString pivotMode READ pivotMode NOTIFY transformSettingsChanged)
+    Q_PROPERTY(QString activeLayerName READ activeLayerName NOTIFY layerChanged)
+    Q_PROPERTY(QStringList layerNames READ layerNames NOTIFY projectStateChanged)
+    Q_PROPERTY(QStringList collectionNames READ collectionNames NOTIFY projectStateChanged)
     Q_PROPERTY(bool transformSnapEnabled READ transformSnapEnabled NOTIFY transformSettingsChanged)
     Q_PROPERTY(bool transformInProgress READ transformInProgress NOTIFY transformActivityChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
@@ -77,6 +80,9 @@ public:
     [[nodiscard]] QString transformTool() const;
     [[nodiscard]] QString transformSpace() const;
     [[nodiscard]] QString pivotMode() const;
+    [[nodiscard]] QString activeLayerName() const;
+    [[nodiscard]] QStringList layerNames() const;
+    [[nodiscard]] QStringList collectionNames() const;
     [[nodiscard]] bool transformSnapEnabled() const noexcept { return transformSnapEnabled_; }
     [[nodiscard]] bool transformInProgress() const noexcept { return manipulator_.active(); }
     [[nodiscard]] m3d::TransformTool transformToolValue() const noexcept { return transformTool_; }
@@ -98,7 +104,8 @@ public:
         }
         return m3d::RenderSnapshotBuilder::build(*scene, session_.selection(),
                                                  session_.sceneRevision(),
-                                                 session_.selectionRevision());
+                                                 session_.selectionRevision(),
+                                                 session_.activeLayer());
     }
 
     Q_INVOKABLE bool createProject(const QString& name);
@@ -126,6 +133,13 @@ public:
     Q_INVOKABLE bool setTransformTool(const QString& name);
     Q_INVOKABLE bool setTransformSpace(const QString& name);
     Q_INVOKABLE bool setPivotMode(const QString& name);
+    Q_INVOKABLE bool setActiveLayer(const QString& name);
+    Q_INVOKABLE bool createCollection();
+    Q_INVOKABLE bool createLayer();
+    Q_INVOKABLE bool addSelectionToCollection(const QString& collectionName);
+    Q_INVOKABLE bool addCollectionToLayer(const QString& collectionName, const QString& layerName);
+    Q_INVOKABLE bool toggleCollectionVisible(const QString& collectionName);
+    Q_INVOKABLE bool toggleCollectionLocked(const QString& collectionName);
     Q_INVOKABLE void setTransformSnapEnabled(bool enabled);
 
     // Viewport-only interaction boundary. Vulkan/Qt input supplies deltas, while
@@ -147,6 +161,7 @@ signals:
     void workspaceChanged();
     void transformSettingsChanged();
     void transformActivityChanged();
+    void layerChanged();
     void statusMessageChanged();
     void recentProjectsChanged();
     void recoveryAvailableChanged();

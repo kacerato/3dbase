@@ -2,6 +2,7 @@
 
 #include "mobile3d/core/command_stack.hpp"
 #include "mobile3d/core/commands/object_commands.hpp"
+#include "mobile3d/core/commands/organization_commands.hpp"
 #include "mobile3d/core/project_repository.hpp"
 #include "mobile3d/core/selection_model.hpp"
 
@@ -75,6 +76,24 @@ public:
     void clearSelection() noexcept;
     [[nodiscard]] const SelectionModel& selection() const noexcept { return selection_; }
 
+    [[nodiscard]] std::optional<LayerId> activeLayer() const noexcept { return activeLayer_; }
+    [[nodiscard]] bool setActiveLayer(std::optional<LayerId> layer);
+
+    [[nodiscard]] std::optional<CollectionId> createCollection(std::string name);
+    [[nodiscard]] bool deleteCollection(CollectionId collection);
+    [[nodiscard]] bool renameCollection(CollectionId collection, std::string name);
+    [[nodiscard]] bool setCollectionVisible(CollectionId collection, bool visible);
+    [[nodiscard]] bool setCollectionLocked(CollectionId collection, bool locked);
+    [[nodiscard]] bool addSelectionToCollection(CollectionId collection);
+    [[nodiscard]] bool removeObjectFromCollection(CollectionId collection, ObjectId object);
+
+    [[nodiscard]] std::optional<LayerId> createLayer(std::string name);
+    [[nodiscard]] bool deleteLayer(LayerId layer);
+    [[nodiscard]] bool renameLayer(LayerId layer, std::string name);
+    [[nodiscard]] bool setLayerEnabled(LayerId layer, bool enabled);
+    [[nodiscard]] bool addCollectionToLayer(LayerId layer, CollectionId collection);
+    [[nodiscard]] bool removeCollectionFromLayer(LayerId layer, CollectionId collection);
+
     [[nodiscard]] bool undo();
     [[nodiscard]] bool redo();
     [[nodiscard]] bool canUndo() const noexcept { return commands_.canUndo(); }
@@ -98,12 +117,15 @@ private:
 
     [[nodiscard]] bool requireProject(std::string* error) const;
     [[nodiscard]] bool transformTransactionHasChanges() const noexcept;
+    [[nodiscard]] bool objectLockedByActiveLayer(ObjectId object) const noexcept;
+    void pruneSelectionForActiveLayer();
     void resetForDocument(bool recoveredDirty) noexcept;
     void sceneMutated(bool pruneSelection = true);
 
     std::optional<ProjectDocument> document_;
     CommandStack commands_;
     SelectionModel selection_;
+    std::optional<LayerId> activeLayer_;
     std::optional<TransformTransactionState> transformTransaction_;
     Workspace workspace_{Workspace::Layout};
     bool recoveredDirty_{false};
