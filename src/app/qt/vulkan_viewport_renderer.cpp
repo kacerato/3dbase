@@ -108,6 +108,118 @@ struct PickTarget final {
     std::vector<PickReadbackSlot> readbacks;
 };
 
+[[nodiscard]] m3d::Vec3 addVector(m3d::Vec3 left, m3d::Vec3 right) noexcept {
+    return {left.x + right.x, left.y + right.y, left.z + right.z};
+}
+
+[[nodiscard]] m3d::Vec3 scaleVector(m3d::Vec3 value, float scale) noexcept {
+    return {value.x * scale, value.y * scale, value.z * scale};
+}
+
+[[nodiscard]] std::array<float, 4> gizmoAxisColor(
+    m3d::TransformConstraint axis,
+    const std::optional<m3d::TransformConstraint>& active) noexcept {
+    if (active && *active == axis) return {1.0F, 0.82F, 0.12F, 1.0F};
+    switch (axis) {
+    case m3d::TransformConstraint::X: return {0.92F, 0.16F, 0.18F, 1.0F};
+    case m3d::TransformConstraint::Y: return {0.20F, 0.82F, 0.28F, 1.0F};
+    case m3d::TransformConstraint::Z: return {0.22F, 0.42F, 0.96F, 1.0F};
+    default: return {0.90F, 0.90F, 0.92F, 1.0F};
+    }
+}
+
+void appendGizmoLine(std::vector<LineVertex>& vertices,
+                     m3d::Vec3 start, m3d::Vec3 end,
+                     const std::array<float, 4>& color) {
+    vertices.push_back({start.x, start.y, start.z, color[0], color[1], color[2], color[3]});
+    vertices.push_back({end.x, end.y, end.z, color[0], color[1], color[2], color[3]});
+}
+
+void appendAxisArrow(std::vector<LineVertex>& vertices,
+                     const VulkanGizmoPresentation& gizmo,
+                     m3d::Vec3 axis, m3d::Vec3 sideA, m3d::Vec3 sideB,
+                     m3d::TransformConstraint constraint) {
+    const auto color = gizmoAxisColor(constraint, gizmo.activeConstraint);
+    const float size = gizmo.worldSize;
+    const m3d::Vec3 end = addVector(gizmo.pivotWorld, scaleVector(axis, size));
+    appendGizmoLine(vertices, gizmo.pivotWorld, end, color);
+    const m3d::Vec3 base = addVector(end, scaleVector(axis, -0.14F * size));
+    const float wing = 0.055F * size;
+    appendGizmoLine(vertices, end, addVector(base, scaleVector(sideA, wing)), color);
+    appendGizmoLine(vertices, end, addVector(base, scaleVector(sideA, -wing)), color);
+    appendGizmoLine(vertices, end, addVector(base, scaleVector(sideB, wing)), color);
+    appendGizmoLine(vertices, end, addVector(base, scaleVector(sideB, -wing)), color);
+}
+
+void appendScaleAxis(std::vector<LineVertex>& vertices,
+                     const VulkanGizmoPresentation& gizmo,
+                     m3d::Vec3 axis, m3d::Vec3 sideA, m3d::Vec3 sideB,
+                     m3d::TransformConstraint constraint) {
+    const auto color = gizmoAxisColor(constraint, gizmo.activeConstraint);
+    const float size = gizmo.worldSize;
+    const m3d::Vec3 end = addVector(gizmo.pivotWorld, scaleVector(axis, size));
+    appendGizmoLine(vertices, gizmo.pivotWorld, end, color);
+    const float marker = 0.055F * size;
+    appendGizmoLine(vertices, addVector(end, scaleVector(sideA, -marker)),
+                    addVector(end, scaleVector(sideA, marker)), color);
+    appendGizmoLine(vertices, addVector(end, scaleVector(sideB, -marker)),
+                    addVector(end, scaleVector(sideB, marker)), color);
+}
+
+void appendRotationRing(std::vector<LineVertex>& vertices,
+                        const VulkanGizmoPresentation& gizmo,
+                        m3d::Vec3 tangentA, m3d::Vec3 tangentB,
+                        m3d::TransformConstraint constraint) {
+    constexpr int segments = 64;
+    constexpr float twoPi = 6.28318530717958647692F;
+    const auto color = gizmoAxisColor(constraint, gizmo.activeConstraint);
+    m3d::Vec3 previous = addVector(gizmo.pivotWorld, scaleVector(tangentA, gizmo.worldSize));
+    for (int index = 1; index <= segments; ++index) {
+        const float angle = twoPi * static_cast<float>(index) / static_cast<float>(segments);
+        const m3d::Vec3 radial = addVector(scaleVector(tangentA, std::cos(angle)),
+                                           scaleVector(tangentB, std::sin(angle)));
+        const m3d::Vec3 current = addVector(gizmo.pivotWorld, scaleVector(radial, gizmo.worldSize));
+        appendGizmoLine(vertices, previous, current, color);
+        previous = current;
+    }
+}
+
+[[nodiscard]] std::vector<LineVertex> makeGizmoVertices(const VulkanGizmoPresentation& gizmo) {
+    std::vector<LineVertex> vertices;
+    if (!gizmo.visible || gizmo.worldSize <= 0.0F) return vertices;
+    vertices.reserve(gizmo.tool == m3d::TransformTool::Rotate ? 384U : 40U);
+
+    const auto& x = gizmo.basis.x;
+    const auto& y = gizmo.basis.y;
+    const auto& z = gizmo.basis.z;
+    if (gizmo.tool == m3d::TransformTool::Translate) {
+        appendAxisArrow(vertices, gizmo, x, y, z, m3d::TransformConstraint::X);
+        appendAxisArrow(vertices, gizmo, y, x, z, m3d::TransformConstraint::Y);
+        appendAxisArrow(vertices, gizmo, z, x, y, m3d::TransformConstraint::Z);
+    } else if (gizmo.tool == m3d::TransformTool::Rotate) {
+        appendRotationRing(vertices, gizmo, y, z, m3d::TransformConstraint::X);
+        appendRotationRing(vertices, gizmo, x, z, m3d::TransformConstraint::Y);
+        appendRotationRing(vertices, gizmo, x, y, m3d::TransformConstraint::Z);
+    } else {
+        appendScaleAxis(vertices, gizmo, x, y, z, m3d::TransformConstraint::X);
+        appendScaleAxis(vertices, gizmo, y, x, z, m3d::TransformConstraint::Y);
+        appendScaleAxis(vertices, gizmo, z, x, y, m3d::TransformConstraint::Z);
+    }
+
+    const std::array<float, 4> centerColor =
+        gizmo.activeConstraint && *gizmo.activeConstraint == m3d::TransformConstraint::Free
+            ? std::array<float, 4>{1.0F, 0.82F, 0.12F, 1.0F}
+            : std::array<float, 4>{0.92F, 0.92F, 0.94F, 1.0F};
+    const float centerSize = gizmo.worldSize * 0.055F;
+    appendGizmoLine(vertices, addVector(gizmo.pivotWorld, scaleVector(x, -centerSize)),
+                    addVector(gizmo.pivotWorld, scaleVector(x, centerSize)), centerColor);
+    appendGizmoLine(vertices, addVector(gizmo.pivotWorld, scaleVector(y, -centerSize)),
+                    addVector(gizmo.pivotWorld, scaleVector(y, centerSize)), centerColor);
+    appendGizmoLine(vertices, addVector(gizmo.pivotWorld, scaleVector(z, -centerSize)),
+                    addVector(gizmo.pivotWorld, scaleVector(z, centerSize)), centerColor);
+    return vertices;
+}
+
 [[nodiscard]] std::vector<LineVertex> makeGridVertices() {
     std::vector<LineVertex> vertices;
     constexpr int extent = 10;
@@ -456,10 +568,11 @@ VulkanViewportRenderer::VulkanViewportRenderer() : impl_(std::make_unique<Impl>(
 VulkanViewportRenderer::~VulkanViewportRenderer() = default;
 
 void VulkanViewportRenderer::synchronize(QRect viewportPixels, m3d::RenderSceneSnapshot snapshot,
-                                         m3d::Mat4 viewProjection) {
+                                         m3d::Mat4 viewProjection, VulkanGizmoPresentation gizmo) {
     viewportPixels_ = viewportPixels;
     snapshot_ = std::move(snapshot);
     viewProjection_ = viewProjection;
+    gizmo_ = std::move(gizmo);
 }
 
 void VulkanViewportRenderer::requestPick(QPoint viewportPixel) {
@@ -1308,6 +1421,27 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
         deviceFunctions->vkCmdBindIndexBuffer(commandBuffer, mesh->second.index.buffer, 0, VK_INDEX_TYPE_UINT32);
         deviceFunctions->vkCmdDrawIndexed(commandBuffer, mesh->second.indexCount, 1, 0, 0, 0);
         ++stats.meshDraws;
+    }
+
+    const auto gizmoVertices = makeGizmoVertices(gizmo_);
+    if (!gizmoVertices.empty()) {
+        const auto stateInfo = window->graphicsStateInfo();
+        ensureFrameGarbage(impl, stateInfo.framesInFlight);
+        auto* garbage = frameGarbageFor(impl, stateInfo.currentFrameSlot);
+        GpuBuffer gizmoBuffer;
+        if (garbage && createHostBuffer(impl.functions, impl.deviceFunctions, impl.physicalDevice, impl.device,
+                                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, gizmoVertices.data(),
+                                        static_cast<VkDeviceSize>(gizmoVertices.size() * sizeof(LineVertex)),
+                                        gizmoBuffer)) {
+            garbage->stagingBuffers.push_back(gizmoBuffer);
+            deviceFunctions->vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, impl.linePipeline);
+            deviceFunctions->vkCmdBindVertexBuffers(commandBuffer, 0, 1, &gizmoBuffer.buffer, &zeroOffset);
+            deviceFunctions->vkCmdPushConstants(commandBuffer, impl.linePipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                                                0, static_cast<std::uint32_t>(sizeof(m3d::Mat4)),
+                                                viewProjection_.values.data());
+            deviceFunctions->vkCmdDraw(commandBuffer, static_cast<std::uint32_t>(gizmoVertices.size()), 1, 0, 0);
+            ++stats.gizmoDraws;
+        }
     }
 
     window->endExternalCommands();
