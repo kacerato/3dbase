@@ -19,42 +19,95 @@ Rectangle {
         controller: root.controller
     }
 
+    // Minimal center guides stay subtle and never carry interaction state.
     Rectangle {
         anchors.centerIn: parent
         width: 1
-        height: parent.height
-        color: "#151922"
+        height: 12
+        color: "#40505f68"
     }
     Rectangle {
         anchors.centerIn: parent
-        width: parent.width
+        width: 12
         height: 1
-        color: "#151922"
+        color: "#40505f68"
     }
 
-    Column {
+    Rectangle {
+        visible: !nativeViewport.vulkanActive
         anchors.centerIn: parent
-        spacing: 8
+        width: fallbackLabel.implicitWidth + 28
+        height: fallbackLabel.implicitHeight + 20
+        radius: 8
+        color: "#d90d1015"
+        border.color: "#303641"
+
         Label {
-            anchors.horizontalCenter: parent.horizontalCenter
-            text: nativeViewport.vulkanActive ? "Vulkan viewport foundation" : "Viewport fallback"
-            color: "#d6dae0"
-            font.pixelSize: 20
-            font.weight: Font.DemiBold
+            id: fallbackLabel
+            anchors.centerIn: parent
+            text: "Viewport fallback • " + nativeViewport.backendName
+            color: "#aab2bf"
         }
-        Label {
-            anchors.horizontalCenter: parent.horizontalCenter
-            text: root.controller.sceneObjectCount + " scene object" + (root.controller.sceneObjectCount === 1 ? "" : "s")
-            color: "#747d8c"
+    }
+
+    // Transform state belongs to EditorController; these controls are only a
+    // touch-friendly presentation of the same C++ state used by the viewport.
+    Flow {
+        id: transformToolbar
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.margins: 10
+        width: Math.min(620, parent.width - 20)
+        spacing: 5
+
+        Button {
+            height: 36
+            text: "Move"
+            highlighted: root.controller.transformTool === "Move"
+            enabled: !root.controller.transformInProgress
+            onClicked: root.controller.setTransformTool("Move")
         }
-        Label {
-            width: Math.min(460, root.width - 40)
-            text: nativeViewport.vulkanActive
-                  ? "One finger/left mouse: orbit • two fingers/middle mouse: pan + pinch/wheel: zoom"
-                  : "Graphics backend: " + nativeViewport.backendName + ". Android production builds request Vulkan; host smoke tests intentionally keep a software fallback."
-            color: "#626b78"
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
+        Button {
+            height: 36
+            text: "Rotate"
+            highlighted: root.controller.transformTool === "Rotate"
+            enabled: !root.controller.transformInProgress
+            onClicked: root.controller.setTransformTool("Rotate")
+        }
+        Button {
+            height: 36
+            text: "Scale"
+            highlighted: root.controller.transformTool === "Scale"
+            enabled: !root.controller.transformInProgress
+            onClicked: root.controller.setTransformTool("Scale")
+        }
+        Button {
+            height: 36
+            text: root.controller.transformSpace
+            enabled: !root.controller.transformInProgress
+            onClicked: root.controller.setTransformSpace(
+                           root.controller.transformSpace === "Global" ? "Local" : "Global")
+        }
+        Button {
+            height: 36
+            text: "Pivot: " + root.controller.pivotMode
+            enabled: !root.controller.transformInProgress
+            onClicked: {
+                if (root.controller.pivotMode === "Median")
+                    root.controller.setPivotMode("Active")
+                else if (root.controller.pivotMode === "Active")
+                    root.controller.setPivotMode("Individual")
+                else
+                    root.controller.setPivotMode("Median")
+            }
+        }
+        Button {
+            height: 36
+            text: root.controller.transformSnapEnabled ? "Snap On" : "Snap Off"
+            highlighted: root.controller.transformSnapEnabled
+            enabled: !root.controller.transformInProgress
+            onClicked: root.controller.setTransformSnapEnabled(
+                           !root.controller.transformSnapEnabled)
         }
     }
 
@@ -67,11 +120,13 @@ Rectangle {
         Button {
             height: 36
             text: nativeViewport.projectionName
+            enabled: !root.controller.transformInProgress
             onClicked: nativeViewport.toggleProjection()
         }
         Button {
             height: 36
             text: "Reset view"
+            enabled: !root.controller.transformInProgress
             onClicked: nativeViewport.resetCamera()
         }
     }
@@ -89,7 +144,9 @@ Rectangle {
         Label {
             id: backendLabel
             anchors.centerIn: parent
-            text: nativeViewport.backendName + (nativeViewport.vulkanActive ? " • native underlay" : " • fallback")
+            text: nativeViewport.backendName
+                  + (nativeViewport.vulkanActive ? " • native" : " • fallback")
+                  + (root.controller.transformInProgress ? " • transforming" : "")
             color: "#9aa3b1"
             font.pixelSize: 11
         }
