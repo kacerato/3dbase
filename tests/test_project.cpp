@@ -1,7 +1,6 @@
 #include "test_harness.hpp"
 
 #include "mobile3d/core/project_repository.hpp"
-#include "mobile3d/core/scene_serializer.hpp"
 
 #include <chrono>
 #include <filesystem>
@@ -73,8 +72,10 @@ TEST_CASE("autosave is independent from the primary scene and recoverable") {
     std::filesystem::remove_all(path);
 }
 
+
 TEST_CASE("scene format v3 round trips collections layers and remains organization aware") {
-    const auto root = tempProjectPath();
+    const auto root = uniqueProjectPath();
+    ProjectCleanup cleanup(root);
     std::filesystem::create_directories(root);
     const auto file = root / "organization.m3scene";
     m3d::Scene scene;
@@ -97,5 +98,4 @@ TEST_CASE("scene format v3 round trips collections layers and remains organizati
     REQUIRE(loaded->findLayer(layer)->collections == std::vector<m3d::CollectionId>{collection});
     REQUIRE(loaded->isObjectVisibleInLayer(object, layer));
     REQUIRE(loaded->isObjectLockedByOrganization(object, layer));
-    std::filesystem::remove_all(root);
 }
