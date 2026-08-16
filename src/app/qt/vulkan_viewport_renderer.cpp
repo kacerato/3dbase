@@ -81,6 +81,11 @@ struct GpuMesh final {
     std::uint64_t contentHash{0};
 };
 
+struct FrameUploadGarbage final {
+    std::vector<GpuBuffer> stagingBuffers;
+    std::vector<GpuMesh> retiredMeshes;
+};
+
 struct PickReadbackSlot final {
     GpuBuffer buffer;
     bool pending{false};
@@ -190,16 +195,16 @@ void destroyImage(QVulkanDeviceFunctions* functions, VkDevice device, GpuImage& 
     image = {};
 }
 
-[[nodiscard]] bool createHostBuffer(QVulkanFunctions* functions,
-                                    QVulkanDeviceFunctions* deviceFunctions,
-                                    VkPhysicalDevice physicalDevice,
-                                    VkDevice device,
-                                    VkBufferUsageFlags usage,
-                                    const void* data,
-                                    VkDeviceSize size,
-                                    GpuBuffer& output) {
+[[nodiscard]] bool createBuffer(QVulkanFunctions* functions,
+                                QVulkanDeviceFunctions* deviceFunctions,
+                                VkPhysicalDevice physicalDevice,
+                                VkDevice device,
+                                VkBufferUsageFlags usage,
+                                VkMemoryPropertyFlags memoryProperties,
+                                VkDeviceSize size,
+                                GpuBuffer& output) {
     output = {};
-    if (!functions || !deviceFunctions || !physicalDevice || !device || !data || size == 0U) return false;
+    if (!functions || !deviceFunctions || !physicalDevice || !device || size == 0U) return false;
 
     auto bufferInfo = vkInfo<VkBufferCreateInfo>(VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO);
     bufferInfo.size = size;
@@ -210,8 +215,7 @@ void destroyImage(QVulkanDeviceFunctions* functions, VkDevice device, GpuImage& 
     VkMemoryRequirements requirements{};
     deviceFunctions->vkGetBufferMemoryRequirements(device, output.buffer, &requirements);
     const auto memoryType = findMemoryType(functions, physicalDevice, requirements.memoryTypeBits,
-                                           VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                                           memoryProperties);
     if (!memoryType) {
         destroyBuffer(deviceFunctions, device, output);
         return false;
@@ -228,6 +232,21 @@ void destroyImage(QVulkanDeviceFunctions* functions, VkDevice device, GpuImage& 
         destroyBuffer(deviceFunctions, device, output);
         return false;
     }
+    return true;
+}
+
+[[nodiscard]] bool createHostBuffer(QVulkanFunctions* functions,
+                                    QVulkanDeviceFunctions* deviceFunctions,
+                                    VkPhysicalDevice physicalDevice,
+                                    VkDevice device,
+                                    VkBufferUsageFlags usage,
+                                    const void* data,
+                                    VkDeviceSize size,
+                                    GpuBuffer& output) {
+    if (!data || !createBuffer(functions, deviceFunctions, physicalDevice, device, usage,
+                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                   VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                               size, output)) return false;
 
     void* mapped = nullptr;
     if (deviceFunctions->vkMapMemory(device, output.memory, 0, size, 0, &mapped) != VK_SUCCESS || !mapped) {
@@ -401,6 +420,7 @@ struct VulkanViewportRenderer::Impl final {
     VkPipelineLayout outlinePipelineLayout{VK_NULL_HANDLE};
     VkPipeline outlinePipeline{VK_NULL_HANDLE};
     std::unordered_map<m3d::ResourceId, GpuMesh, m3d::ResourceIdHash> meshCache;
+    std::vector<FrameUploadGarbage> frameGarbage;
     PickTarget pickTarget;
 };
 
@@ -542,17 +562,90 @@ void destroyGpuMesh(VulkanViewportRenderer::Impl& impl, GpuMesh& mesh) {
     destroyBuffer(impl.deviceFunctions, impl.device, mesh.index);
 }
 
+void destroyFrameGarbage(VulkanViewportRenderer::Impl& impl, FrameUploadGarbage& garbage) {
+    for (auto& buffer : garbage.stagingBuffers) {
+        destroyBuffer(impl.deviceFunctions, impl.device, buffer);
+    }
+    garbage.stagingBuffers.clear();
+    for (auto& mesh : garbage.retiredMeshes) destroyGpuMesh(impl, mesh);
+    garbage.retiredMeshes.clear();
+}
+
+void ensureFrameGarbage(VulkanViewportRenderer::Impl& impl, int framesInFlight) {
+    const std::size_t required = static_cast<std::size_t>(std::max(framesInFlight, 1));
+    if (impl.frameGarbage.size() == required) return;
+    for (auto& garbage : impl.frameGarbage) destroyFrameGarbage(impl, garbage);
+    impl.frameGarbage.clear();
+    impl.frameGarbage.resize(required);
+}
+
+[[nodiscard]] FrameUploadGarbage* frameGarbageFor(VulkanViewportRenderer::Impl& impl,
+                                                   int frameSlot) noexcept {
+    if (frameSlot < 0 || static_cast<std::size_t>(frameSlot) >= impl.frameGarbage.size()) return nullptr;
+    return &impl.frameGarbage[static_cast<std::size_t>(frameSlot)];
+}
+
+bool uploadDeviceLocalBuffer(VulkanViewportRenderer::Impl& impl,
+                             VkCommandBuffer commandBuffer,
+                             int frameSlot,
+                             VkBufferUsageFlags finalUsage,
+                             VkAccessFlags finalAccess,
+                             const void* data,
+                             VkDeviceSize size,
+                             GpuBuffer& output) {
+    auto* garbage = frameGarbageFor(impl, frameSlot);
+    if (!garbage || !commandBuffer || !data || size == 0U) return false;
+
+    GpuBuffer staging;
+    if (!createHostBuffer(impl.functions, impl.deviceFunctions, impl.physicalDevice, impl.device,
+                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT, data, size, staging)) return false;
+    if (!createBuffer(impl.functions, impl.deviceFunctions, impl.physicalDevice, impl.device,
+                      VK_BUFFER_USAGE_TRANSFER_DST_BIT | finalUsage,
+                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, size, output)) {
+        destroyBuffer(impl.deviceFunctions, impl.device, staging);
+        return false;
+    }
+
+    VkBufferCopy copy{};
+    copy.size = size;
+    impl.deviceFunctions->vkCmdCopyBuffer(commandBuffer, staging.buffer, output.buffer, 1, &copy);
+
+    auto barrier = vkInfo<VkBufferMemoryBarrier>(VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER);
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = finalAccess;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.buffer = output.buffer;
+    barrier.offset = 0;
+    barrier.size = size;
+    impl.deviceFunctions->vkCmdPipelineBarrier(commandBuffer,
+                                                VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                                VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+                                                0, 0, nullptr, 1, &barrier, 0, nullptr);
+    garbage->stagingBuffers.push_back(std::move(staging));
+    return true;
+}
+
 bool uploadMesh(VulkanViewportRenderer::Impl& impl,
+                VkCommandBuffer commandBuffer,
+                int frameSlot,
                 const m3d::RenderMeshSnapshot& source,
                 GpuMesh& mesh) {
     if (source.vertices.empty() || source.indices.empty()) return false;
-    if (!createHostBuffer(impl.functions, impl.deviceFunctions, impl.physicalDevice, impl.device,
-                          VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, source.vertices.data(),
-                          static_cast<VkDeviceSize>(source.vertices.size() * sizeof(m3d::MeshVertex)), mesh.vertex)) return false;
-    if (!createHostBuffer(impl.functions, impl.deviceFunctions, impl.physicalDevice, impl.device,
-                          VK_BUFFER_USAGE_INDEX_BUFFER_BIT, source.indices.data(),
-                          static_cast<VkDeviceSize>(source.indices.size() * sizeof(std::uint32_t)), mesh.index)) {
-        destroyBuffer(impl.deviceFunctions, impl.device, mesh.vertex);
+    const VkDeviceSize vertexBytes =
+        static_cast<VkDeviceSize>(source.vertices.size() * sizeof(m3d::MeshVertex));
+    const VkDeviceSize indexBytes =
+        static_cast<VkDeviceSize>(source.indices.size() * sizeof(std::uint32_t));
+    if (!uploadDeviceLocalBuffer(impl, commandBuffer, frameSlot,
+                                 VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                 VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
+                                 source.vertices.data(), vertexBytes, mesh.vertex)) return false;
+    if (!uploadDeviceLocalBuffer(impl, commandBuffer, frameSlot,
+                                 VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                                 VK_ACCESS_INDEX_READ_BIT,
+                                 source.indices.data(), indexBytes, mesh.index)) {
+        auto* garbage = frameGarbageFor(impl, frameSlot);
+        if (garbage) garbage->retiredMeshes.push_back(std::move(mesh));
         return false;
     }
     mesh.indexCount = static_cast<std::uint32_t>(source.indices.size());
@@ -561,23 +654,30 @@ bool uploadMesh(VulkanViewportRenderer::Impl& impl,
 }
 
 bool synchronizeMeshCache(VulkanViewportRenderer::Impl& impl,
-                          const m3d::RenderSceneSnapshot& snapshot) {
+                          const m3d::RenderSceneSnapshot& snapshot,
+                          VkCommandBuffer commandBuffer,
+                          int frameSlot) {
+    auto* garbage = frameGarbageFor(impl, frameSlot);
+    if (!garbage) return false;
+
     std::unordered_set<m3d::ResourceId, m3d::ResourceIdHash> live;
     for (const auto& source : snapshot.meshes()) {
         live.insert(source.id);
         auto found = impl.meshCache.find(source.id);
         if (found != impl.meshCache.end() && found->second.contentHash == source.contentHash) continue;
-        if (found != impl.meshCache.end()) {
-            destroyGpuMesh(impl, found->second);
-            impl.meshCache.erase(found);
-        }
+
         GpuMesh uploaded;
-        if (!uploadMesh(impl, source, uploaded)) return false;
-        impl.meshCache.emplace(source.id, std::move(uploaded));
+        if (!uploadMesh(impl, commandBuffer, frameSlot, source, uploaded)) return false;
+        if (found != impl.meshCache.end()) {
+            garbage->retiredMeshes.push_back(std::move(found->second));
+            found->second = std::move(uploaded);
+        } else {
+            impl.meshCache.emplace(source.id, std::move(uploaded));
+        }
     }
     for (auto iterator = impl.meshCache.begin(); iterator != impl.meshCache.end();) {
         if (!live.contains(iterator->first)) {
-            destroyGpuMesh(impl, iterator->second);
+            garbage->retiredMeshes.push_back(std::move(iterator->second));
             iterator = impl.meshCache.erase(iterator);
         } else {
             ++iterator;
@@ -778,6 +878,8 @@ void VulkanViewportRenderer::release() {
         return;
     }
     destroyPickTarget(impl);
+    for (auto& garbage : impl.frameGarbage) destroyFrameGarbage(impl, garbage);
+    impl.frameGarbage.clear();
     for (auto& [id, mesh] : impl.meshCache) {
         (void)id;
         destroyGpuMesh(impl, mesh);
@@ -802,12 +904,16 @@ VulkanPickResult VulkanViewportRenderer::recordPicking(QQuickWindow* window) {
     }
 
     const auto stateInfo = window->graphicsStateInfo();
+    ensureFrameGarbage(impl, stateInfo.framesInFlight);
+    auto* frameGarbage = frameGarbageFor(impl, stateInfo.currentFrameSlot);
+    if (!frameGarbage) {
+        result.waitingForReadback = pendingPickPixel_.has_value();
+        return result;
+    }
+    destroyFrameGarbage(impl, *frameGarbage);
+
     if (!impl.pickTarget.readbacks.empty()) {
         result = consumeReadback(impl, stateInfo.currentFrameSlot);
-    }
-    if (!pendingPickPixel_) {
-        result.waitingForReadback = result.waitingForReadback || anyPendingReadback(impl.pickTarget);
-        return result;
     }
 
     auto* rendererInterface = window->rendererInterface();
@@ -816,9 +922,27 @@ VulkanPickResult VulkanViewportRenderer::recordPicking(QQuickWindow* window) {
               window, QSGRendererInterface::RhiSwapchainResource))
         : nullptr;
     if (!rendererInterface || rendererInterface->graphicsApi() != QSGRendererInterface::Vulkan ||
-        !swapchain || impl.sampleCount != std::max(1, swapchain->sampleCount()) ||
-        !meshCacheReady(impl, snapshot_)) {
-        result.waitingForReadback = true;
+        !swapchain || impl.sampleCount != std::max(1, swapchain->sampleCount())) {
+        result.waitingForReadback = pendingPickPixel_.has_value() || anyPendingReadback(impl.pickTarget);
+        return result;
+    }
+
+    if (!meshCacheReady(impl, snapshot_)) {
+        window->beginExternalCommands();
+        auto* uploadCommandBufferHandle = static_cast<VkCommandBuffer*>(rendererInterface->getResource(
+            window, QSGRendererInterface::CommandListResource));
+        if (!uploadCommandBufferHandle || !*uploadCommandBufferHandle ||
+            !synchronizeMeshCache(impl, snapshot_, *uploadCommandBufferHandle,
+                                  stateInfo.currentFrameSlot)) {
+            window->endExternalCommands();
+            result.waitingForReadback = true;
+            return result;
+        }
+        window->endExternalCommands();
+    }
+
+    if (!pendingPickPixel_) {
+        result.waitingForReadback = result.waitingForReadback || anyPendingReadback(impl.pickTarget);
         return result;
     }
 
@@ -993,7 +1117,10 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
             return stats;
         }
     }
-    if (!synchronizeMeshCache(impl, snapshot_)) return stats;
+    if (!meshCacheReady(impl, snapshot_)) {
+        stats.needsAnotherFrame = true;
+        return stats;
+    }
 
     const qreal dpr = window->devicePixelRatio();
     const QSize framebufferSize{
