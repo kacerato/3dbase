@@ -233,10 +233,10 @@ std::optional<Scene> SceneSerializer::read(const std::filesystem::path& path, st
             std::string record;
             std::string idText;
             int enabled = 1;
-            std::size_t collectionCount = 0;
+            std::size_t layerCollectionCount = 0;
             SceneLayer layer;
             if (!(input >> record >> std::quoted(idText) >> std::quoted(layer.name)
-                  >> enabled >> collectionCount) || record != "layer") {
+                  >> enabled >> layerCollectionCount) || record != "layer") {
                 if (error) *error = "Malformed layer record";
                 return std::nullopt;
             }
@@ -244,8 +244,8 @@ std::optional<Scene> SceneSerializer::read(const std::filesystem::path& path, st
             if (!id || id->isNull()) { if (error) *error = "Invalid layer id"; return std::nullopt; }
             layer.id = *id;
             layer.enabled = enabled != 0;
-            layer.collections.reserve(collectionCount);
-            for (std::size_t member = 0; member < collectionCount; ++member) {
+            layer.collections.reserve(layerCollectionCount);
+            for (std::size_t member = 0; member < layerCollectionCount; ++member) {
                 std::string collectionText;
                 if (!(input >> std::quoted(collectionText))) { if (error) *error = "Malformed layer membership"; return std::nullopt; }
                 const auto collectionId = CollectionId::fromString(collectionText);
