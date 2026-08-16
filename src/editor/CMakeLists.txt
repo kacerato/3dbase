@@ -1,5 +1,6 @@
 add_library(mobile3d_editor STATIC
     src/editor_session.cpp
+    src/transform_gizmo.cpp
 )
 
 add_library(Mobile3D::Editor ALIAS mobile3d_editor)
