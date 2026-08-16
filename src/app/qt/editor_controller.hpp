@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mobile3d/editor/editor_session.hpp"
+#include "mobile3d/editor/transform_manipulator.hpp"
 #include "mobile3d/render/render_snapshot.hpp"
 
 #include <QAbstractItemModel>
@@ -37,6 +38,11 @@ class EditorController final : public QObject {
     Q_PROPERTY(double scaleX READ scaleX NOTIFY selectionChanged)
     Q_PROPERTY(double scaleY READ scaleY NOTIFY selectionChanged)
     Q_PROPERTY(double scaleZ READ scaleZ NOTIFY selectionChanged)
+    Q_PROPERTY(QString transformTool READ transformTool NOTIFY transformSettingsChanged)
+    Q_PROPERTY(QString transformSpace READ transformSpace NOTIFY transformSettingsChanged)
+    Q_PROPERTY(QString pivotMode READ pivotMode NOTIFY transformSettingsChanged)
+    Q_PROPERTY(bool transformSnapEnabled READ transformSnapEnabled NOTIFY transformSettingsChanged)
+    Q_PROPERTY(bool transformInProgress READ transformInProgress NOTIFY transformActivityChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
     Q_PROPERTY(QStringList recentProjects READ recentProjects NOTIFY recentProjectsChanged)
     Q_PROPERTY(bool recoveryAvailable READ recoveryAvailable NOTIFY recoveryAvailableChanged)
@@ -67,6 +73,16 @@ public:
     [[nodiscard]] double scaleX() const;
     [[nodiscard]] double scaleY() const;
     [[nodiscard]] double scaleZ() const;
+
+    [[nodiscard]] QString transformTool() const;
+    [[nodiscard]] QString transformSpace() const;
+    [[nodiscard]] QString pivotMode() const;
+    [[nodiscard]] bool transformSnapEnabled() const noexcept { return transformSnapEnabled_; }
+    [[nodiscard]] bool transformInProgress() const noexcept { return manipulator_.active(); }
+    [[nodiscard]] m3d::TransformTool transformToolValue() const noexcept { return transformTool_; }
+    [[nodiscard]] m3d::TransformSpace transformSpaceValue() const noexcept { return transformSpace_; }
+    [[nodiscard]] m3d::PivotMode pivotModeValue() const noexcept { return pivotMode_; }
+    [[nodiscard]] m3d::TransformSnapSettings transformSnapSettings() const noexcept;
 
     [[nodiscard]] QString statusMessage() const { return statusMessage_; }
     [[nodiscard]] QStringList recentProjects() const { return recentProjects_; }
@@ -104,6 +120,19 @@ public:
     Q_INVOKABLE bool undo();
     Q_INVOKABLE bool redo();
     Q_INVOKABLE bool setWorkspace(const QString& name);
+    Q_INVOKABLE bool setTransformTool(const QString& name);
+    Q_INVOKABLE bool setTransformSpace(const QString& name);
+    Q_INVOKABLE bool setPivotMode(const QString& name);
+    Q_INVOKABLE void setTransformSnapEnabled(bool enabled);
+
+    // Viewport-only interaction boundary. Vulkan/Qt input supplies deltas, while
+    // all scene mutation remains inside the EditorSession transaction system.
+    [[nodiscard]] bool beginViewportTransform(m3d::TransformConstraint constraint);
+    [[nodiscard]] bool updateViewportTranslation(m3d::Vec3 gizmoComponents);
+    [[nodiscard]] bool updateViewportRotation(float angleRadians);
+    [[nodiscard]] bool updateViewportScale(float factor);
+    [[nodiscard]] bool commitViewportTransform();
+    [[nodiscard]] bool cancelViewportTransform();
 
 public slots:
     void handleApplicationState(Qt::ApplicationState state);
@@ -113,6 +142,8 @@ signals:
     void historyChanged();
     void selectionChanged();
     void workspaceChanged();
+    void transformSettingsChanged();
+    void transformActivityChanged();
     void statusMessageChanged();
     void recentProjectsChanged();
     void recoveryAvailableChanged();
@@ -122,10 +153,14 @@ private:
     [[nodiscard]] static QString objectTypeName(m3d::ObjectType type);
     [[nodiscard]] static std::optional<m3d::ObjectType> objectTypeFromName(const QString& name);
     [[nodiscard]] static std::optional<m3d::Workspace> workspaceFromName(const QString& name);
+    [[nodiscard]] static std::optional<m3d::TransformTool> transformToolFromName(const QString& name);
+    [[nodiscard]] static std::optional<m3d::TransformSpace> transformSpaceFromName(const QString& name);
+    [[nodiscard]] static std::optional<m3d::PivotMode> pivotModeFromName(const QString& name);
     [[nodiscard]] static std::filesystem::path toFilesystemPath(const QString& value);
     [[nodiscard]] static QString fromFilesystemPath(const std::filesystem::path& value);
 
     void refreshUi();
+    void refreshTransformPreview();
     void setStatus(QString message);
     void setRecoveryAvailable(bool value);
     void loadRecentProjects();
@@ -133,6 +168,11 @@ private:
     [[nodiscard]] QString allocateProjectPath(const QString& name) const;
 
     m3d::EditorSession session_;
+    m3d::TransformManipulator manipulator_;
+    m3d::TransformTool transformTool_{m3d::TransformTool::Translate};
+    m3d::TransformSpace transformSpace_{m3d::TransformSpace::Global};
+    m3d::PivotMode pivotMode_{m3d::PivotMode::Median};
+    bool transformSnapEnabled_{false};
     std::unique_ptr<OutlinerModel> outliner_;
     QSettings settings_;
     QTimer autosaveTimer_;
