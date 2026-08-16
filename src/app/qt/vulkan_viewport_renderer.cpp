@@ -128,6 +128,18 @@ struct PickTarget final {
     }
 }
 
+[[nodiscard]] std::array<float, 4> gizmoPlaneColor(
+    m3d::TransformConstraint plane,
+    const std::optional<m3d::TransformConstraint>& active) noexcept {
+    if (active && *active == plane) return {1.0F, 0.82F, 0.12F, 1.0F};
+    switch (plane) {
+    case m3d::TransformConstraint::XY: return {0.82F, 0.72F, 0.18F, 1.0F};
+    case m3d::TransformConstraint::XZ: return {0.82F, 0.24F, 0.68F, 1.0F};
+    case m3d::TransformConstraint::YZ: return {0.18F, 0.76F, 0.76F, 1.0F};
+    default: return {0.90F, 0.90F, 0.92F, 1.0F};
+    }
+}
+
 void appendGizmoLine(std::vector<LineVertex>& vertices,
                      m3d::Vec3 start, m3d::Vec3 end,
                      const std::array<float, 4>& color) {
@@ -166,6 +178,27 @@ void appendScaleAxis(std::vector<LineVertex>& vertices,
                     addVector(end, scaleVector(sideB, marker)), color);
 }
 
+void appendPlaneHandle(std::vector<LineVertex>& vertices,
+                       const VulkanGizmoPresentation& gizmo,
+                       m3d::Vec3 axisA, m3d::Vec3 axisB,
+                       m3d::TransformConstraint constraint) {
+    const auto color = gizmoPlaneColor(constraint, gizmo.activeConstraint);
+    const float inner = gizmo.worldSize * 0.22F;
+    const float outer = gizmo.worldSize * 0.42F;
+    const auto corner = [&](float a, float b) {
+        return addVector(gizmo.pivotWorld,
+                         addVector(scaleVector(axisA, a), scaleVector(axisB, b)));
+    };
+    const m3d::Vec3 p00 = corner(inner, inner);
+    const m3d::Vec3 p10 = corner(outer, inner);
+    const m3d::Vec3 p11 = corner(outer, outer);
+    const m3d::Vec3 p01 = corner(inner, outer);
+    appendGizmoLine(vertices, p00, p10, color);
+    appendGizmoLine(vertices, p10, p11, color);
+    appendGizmoLine(vertices, p11, p01, color);
+    appendGizmoLine(vertices, p01, p00, color);
+}
+
 void appendRotationRing(std::vector<LineVertex>& vertices,
                         const VulkanGizmoPresentation& gizmo,
                         m3d::Vec3 tangentA, m3d::Vec3 tangentB,
@@ -187,7 +220,7 @@ void appendRotationRing(std::vector<LineVertex>& vertices,
 [[nodiscard]] std::vector<LineVertex> makeGizmoVertices(const VulkanGizmoPresentation& gizmo) {
     std::vector<LineVertex> vertices;
     if (!gizmo.visible || gizmo.worldSize <= 0.0F) return vertices;
-    vertices.reserve(gizmo.tool == m3d::TransformTool::Rotate ? 384U : 40U);
+    vertices.reserve(gizmo.tool == m3d::TransformTool::Rotate ? 384U : 72U);
 
     const auto& x = gizmo.basis.x;
     const auto& y = gizmo.basis.y;
@@ -196,14 +229,21 @@ void appendRotationRing(std::vector<LineVertex>& vertices,
         appendAxisArrow(vertices, gizmo, x, y, z, m3d::TransformConstraint::X);
         appendAxisArrow(vertices, gizmo, y, x, z, m3d::TransformConstraint::Y);
         appendAxisArrow(vertices, gizmo, z, x, y, m3d::TransformConstraint::Z);
+        appendPlaneHandle(vertices, gizmo, x, y, m3d::TransformConstraint::XY);
+        appendPlaneHandle(vertices, gizmo, x, z, m3d::TransformConstraint::XZ);
+        appendPlaneHandle(vertices, gizmo, y, z, m3d::TransformConstraint::YZ);
     } else if (gizmo.tool == m3d::TransformTool::Rotate) {
         appendRotationRing(vertices, gizmo, y, z, m3d::TransformConstraint::X);
         appendRotationRing(vertices, gizmo, x, z, m3d::TransformConstraint::Y);
         appendRotationRing(vertices, gizmo, x, y, m3d::TransformConstraint::Z);
-    } else {
+    } else if (gizmo.space == m3d::TransformSpace::Local &&
+               gizmo.pivotMode == m3d::PivotMode::IndividualOrigins) {
         appendScaleAxis(vertices, gizmo, x, y, z, m3d::TransformConstraint::X);
         appendScaleAxis(vertices, gizmo, y, x, z, m3d::TransformConstraint::Y);
         appendScaleAxis(vertices, gizmo, z, x, y, m3d::TransformConstraint::Z);
+        appendPlaneHandle(vertices, gizmo, x, y, m3d::TransformConstraint::XY);
+        appendPlaneHandle(vertices, gizmo, x, z, m3d::TransformConstraint::XZ);
+        appendPlaneHandle(vertices, gizmo, y, z, m3d::TransformConstraint::YZ);
     }
 
     const std::array<float, 4> centerColor =
