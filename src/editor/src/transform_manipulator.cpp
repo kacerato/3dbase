@@ -52,6 +52,10 @@ constexpr float kEpsilon = 1.0e-7F;
     return {left.x - right.x, left.y - right.y, left.z - right.z};
 }
 
+[[nodiscard]] Vec3 scaled(Vec3 value, float factor) noexcept {
+    return {value.x * factor, value.y * factor, value.z * factor};
+}
+
 [[nodiscard]] Vec3 rotated(Vec3 value, Quat rotation) noexcept {
     const Quat q = normalized(rotation);
     const Quat vector{value.x, value.y, value.z, 0.0F};
@@ -333,6 +337,120 @@ bool TransformManipulator::updateRotation(float angleRadians) {
         Transform preview = target.initialLocal;
         preview.position = localPosition;
         preview.rotation = localRotation;
+        if (!session_->previewTransform(target.object, preview)) {
+            (void)session_->cancelTransformTransaction();
+            reset();
+            return false;
+        }
+    }
+    return true;
+}
+
+bool TransformManipulator::beginScale(EditorSession& session,
+                                      TransformSpace space,
+                                      TransformConstraint constraint,
+                                      PivotMode pivotMode,
+                                      TransformSnapSettings snapping) {
+    if (active() || !session.hasProject() || session.hasTransformTransaction() ||
+        session.selection().empty()) return false;
+
+    const bool nonUniform = constraint != TransformConstraint::Free;
+    // Arbitrary non-uniform world scaling can introduce shear, which cannot be
+    // represented by the current position/quaternion/scale Transform. Keep the
+    // supported operation explicit instead of silently decomposing/shearing.
+    if (nonUniform &&
+        (space != TransformSpace::Local || pivotMode != PivotMode::IndividualOrigins)) {
+        return false;
+    }
+
+    const Scene* scene = session.scene();
+    if (!scene) return false;
+    const auto activeObject = session.selection().active();
+    const ObjectId basisObject = activeObject.value_or(session.selection().selected().front());
+    const GizmoBasis newBasis = makeGizmoBasis(space, worldRotation(*scene, basisObject));
+
+    std::vector<Target> newTargets;
+    std::vector<ObjectId> transactionObjects;
+    newTargets.reserve(session.selection().size());
+    transactionObjects.reserve(session.selection().size());
+    for (const ObjectId objectId : session.selection().selected()) {
+        if (hasSelectedAncestor(*scene, session.selection(), objectId)) continue;
+        const SceneObject* object = scene->find(objectId);
+        if (!object) return false;
+        Matrix3 parentLinear = identityMatrix();
+        Vec3 parentPosition{};
+        Quat parentRotation{};
+        if (object->parent) {
+            parentLinear = worldLinear(*scene, *object->parent);
+            parentPosition = worldPosition(*scene, *object->parent);
+            parentRotation = worldRotation(*scene, *object->parent);
+        }
+        const auto inverseParent = inverse(parentLinear);
+        if (!inverseParent) return false;
+        const Vec3 initialWorldPosition = added(
+            parentPosition, multiplied(parentLinear, object->localTransform.position));
+        const Quat initialWorldRotation = multiplied(parentRotation, object->localTransform.rotation);
+        newTargets.push_back(Target{objectId, object->localTransform, *inverseParent,
+                                    parentPosition, initialWorldPosition,
+                                    parentRotation, initialWorldRotation});
+        transactionObjects.push_back(objectId);
+    }
+    if (newTargets.empty()) return false;
+
+    Vec3 pivot{};
+    if (pivotMode == PivotMode::Active) {
+        pivot = worldPosition(*scene, basisObject);
+    } else if (pivotMode == PivotMode::Median) {
+        for (const auto& target : newTargets) pivot = added(pivot, target.initialWorldPosition);
+        const float inverseCount = 1.0F / static_cast<float>(newTargets.size());
+        pivot = scaled(pivot, inverseCount);
+    }
+
+    if (!session.beginTransformTransaction(transactionObjects, "Scale Objects")) return false;
+    session_ = &session;
+    tool_ = TransformTool::Scale;
+    space_ = space;
+    constraint_ = constraint;
+    pivotMode_ = pivotMode;
+    pivotWorld_ = pivot;
+    snapping_ = snapping;
+    basis_ = newBasis;
+    targets_ = std::move(newTargets);
+    return true;
+}
+
+bool TransformManipulator::updateScale(float factor) {
+    if (!session_ || tool_ != TransformTool::Scale) return false;
+    const Vec3 factors = composeScaleFactors(factor, constraint_, snapping_);
+    const bool uniform = constraint_ == TransformConstraint::Free;
+
+    for (const auto& target : targets_) {
+        Transform preview = target.initialLocal;
+        if (uniform) {
+            const float uniformFactor = factors.x;
+            const Vec3 pivot = pivotMode_ == PivotMode::IndividualOrigins
+                ? target.initialWorldPosition : pivotWorld_;
+            const Vec3 worldPositionAfter = added(
+                pivot, scaled(subtracted(target.initialWorldPosition, pivot), uniformFactor));
+            preview.position = multiplied(
+                target.inverseParentWorldLinear,
+                subtracted(worldPositionAfter, target.parentWorldPosition));
+            preview.scale = {
+                target.initialLocal.scale.x * uniformFactor,
+                target.initialLocal.scale.y * uniformFactor,
+                target.initialLocal.scale.z * uniformFactor,
+            };
+        } else {
+            // Non-uniform scaling is intentionally local + individual-origin
+            // only, so no shear-inducing world decomposition is necessary.
+            preview.position = target.initialLocal.position;
+            preview.scale = {
+                target.initialLocal.scale.x * factors.x,
+                target.initialLocal.scale.y * factors.y,
+                target.initialLocal.scale.z * factors.z,
+            };
+        }
+
         if (!session_->previewTransform(target.object, preview)) {
             (void)session_->cancelTransformTransaction();
             reset();

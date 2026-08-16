@@ -249,3 +249,128 @@ TEST_CASE("active pivot rotation keeps active object origin fixed") {
     REQUIRE(near(otherPreview.position.y, 1.0F));
     REQUIRE(manipulator.cancel());
 }
+
+
+TEST_CASE("uniform scale around median changes origins and local scale in one undo") {
+    const auto path = uniqueManipulatorProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Median Scale", &error));
+    const auto left = session.createObject(m3d::ObjectType::Empty, "Left");
+    const auto right = session.createObject(m3d::ObjectType::Empty, "Right");
+    REQUIRE(left.has_value());
+    REQUIRE(right.has_value());
+    auto leftTransform = session.scene()->find(*left)->localTransform;
+    auto rightTransform = session.scene()->find(*right)->localTransform;
+    leftTransform.position.x = -1.0F;
+    rightTransform.position.x = 1.0F;
+    REQUIRE(session.transformObject(*left, leftTransform));
+    REQUIRE(session.transformObject(*right, rightTransform));
+    REQUIRE(session.saveProject(&error));
+    REQUIRE(session.select(*left, m3d::SelectionMode::Replace));
+    REQUIRE(session.select(*right, m3d::SelectionMode::Add));
+
+    m3d::TransformManipulator manipulator;
+    REQUIRE(manipulator.beginScale(session, m3d::TransformSpace::Global,
+                                   m3d::TransformConstraint::Free,
+                                   m3d::PivotMode::Median));
+    REQUIRE(manipulator.updateScale(2.0F));
+    const auto leftPreview = session.scene()->find(*left)->localTransform;
+    const auto rightPreview = session.scene()->find(*right)->localTransform;
+    REQUIRE(near(leftPreview.position.x, -2.0F));
+    REQUIRE(near(rightPreview.position.x, 2.0F));
+    REQUIRE(near(leftPreview.scale.x, 2.0F));
+    REQUIRE(near(leftPreview.scale.y, 2.0F));
+    REQUIRE(near(leftPreview.scale.z, 2.0F));
+    REQUIRE(manipulator.commit());
+    REQUIRE(session.nextUndoName() == "Scale Objects");
+    REQUIRE(session.undo());
+    REQUIRE(session.scene()->find(*left)->localTransform == leftTransform);
+    REQUIRE(session.scene()->find(*right)->localTransform == rightTransform);
+}
+
+TEST_CASE("local non uniform scale uses individual origins and preserves position") {
+    const auto path = uniqueManipulatorProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Local Axis Scale", &error));
+    const auto object = session.createObject(m3d::ObjectType::Empty, "Object");
+    REQUIRE(object.has_value());
+    auto before = session.scene()->find(*object)->localTransform;
+    before.position = {3.0F, 4.0F, 5.0F};
+    before.scale = {2.0F, 3.0F, 4.0F};
+    REQUIRE(session.transformObject(*object, before));
+    REQUIRE(session.select(*object, m3d::SelectionMode::Replace));
+
+    m3d::TransformSnapSettings snapping;
+    snapping.scaleEnabled = true;
+    snapping.scaleStep = 0.1F;
+    m3d::TransformManipulator manipulator;
+    REQUIRE(manipulator.beginScale(session, m3d::TransformSpace::Local,
+                                   m3d::TransformConstraint::X,
+                                   m3d::PivotMode::IndividualOrigins,
+                                   snapping));
+    REQUIRE(manipulator.updateScale(1.26F));
+    const auto preview = session.scene()->find(*object)->localTransform;
+    REQUIRE(preview.position == before.position);
+    REQUIRE(near(preview.scale.x, 2.6F));
+    REQUIRE(near(preview.scale.y, 3.0F));
+    REQUIRE(near(preview.scale.z, 4.0F));
+    REQUIRE(manipulator.cancel());
+    REQUIRE(session.scene()->find(*object)->localTransform == before);
+}
+
+TEST_CASE("non uniform scale rejects shear producing transform policies") {
+    const auto path = uniqueManipulatorProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Scale Policy", &error));
+    const auto object = session.createObject(m3d::ObjectType::Empty, "Object");
+    REQUIRE(object.has_value());
+    REQUIRE(session.select(*object, m3d::SelectionMode::Replace));
+
+    m3d::TransformManipulator manipulator;
+    REQUIRE(!manipulator.beginScale(session, m3d::TransformSpace::Global,
+                                    m3d::TransformConstraint::X,
+                                    m3d::PivotMode::IndividualOrigins));
+    REQUIRE(!manipulator.active());
+    REQUIRE(!manipulator.beginScale(session, m3d::TransformSpace::Local,
+                                    m3d::TransformConstraint::XY,
+                                    m3d::PivotMode::Median));
+    REQUIRE(!manipulator.active());
+}
+
+TEST_CASE("uniform scale around active pivot keeps active origin fixed") {
+    const auto path = uniqueManipulatorProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Active Scale", &error));
+    const auto other = session.createObject(m3d::ObjectType::Empty, "Other");
+    const auto active = session.createObject(m3d::ObjectType::Empty, "Active");
+    REQUIRE(other.has_value());
+    REQUIRE(active.has_value());
+    auto otherBefore = session.scene()->find(*other)->localTransform;
+    auto activeBefore = session.scene()->find(*active)->localTransform;
+    otherBefore.position = {2.0F, 0.0F, 0.0F};
+    activeBefore.position = {1.0F, 0.0F, 0.0F};
+    REQUIRE(session.transformObject(*other, otherBefore));
+    REQUIRE(session.transformObject(*active, activeBefore));
+    REQUIRE(session.select(*other, m3d::SelectionMode::Replace));
+    REQUIRE(session.select(*active, m3d::SelectionMode::Add));
+
+    m3d::TransformManipulator manipulator;
+    REQUIRE(manipulator.beginScale(session, m3d::TransformSpace::Global,
+                                   m3d::TransformConstraint::Free,
+                                   m3d::PivotMode::Active));
+    REQUIRE(manipulator.updateScale(3.0F));
+    const auto activePreview = session.scene()->find(*active)->localTransform;
+    const auto otherPreview = session.scene()->find(*other)->localTransform;
+    REQUIRE(activePreview.position == activeBefore.position);
+    REQUIRE(near(otherPreview.position.x, 4.0F));
+    REQUIRE(near(activePreview.scale.x, 3.0F));
+    REQUIRE(manipulator.cancel());
+}
