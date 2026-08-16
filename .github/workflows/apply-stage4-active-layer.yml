@@ -1,0 +1,24 @@
+name: Apply Stage 4 Active Layer
+on:
+  push:
+    branches: [main]
+    paths: ['.automation/stage4_active_layer.py']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - run: |
+          python3 .automation/stage4_active_layer.py
+          rm .automation/stage4_active_layer.py
+          rm .github/workflows/apply-stage4-active-layer.yml
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "integrate active scene layers"
+          git push origin HEAD:main
