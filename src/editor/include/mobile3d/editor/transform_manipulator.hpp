@@ -33,14 +33,10 @@ public:
     [[nodiscard]] const GizmoBasis& basis() const noexcept { return basis_; }
 
 private:
-    struct Mat3 final {
-        std::array<float, 9> values{};
-    };
-
     struct Target final {
         ObjectId object{};
         Transform initialLocal{};
-        Mat3 inverseParentWorldLinear{};
+        std::array<float, 9> inverseParentWorldLinear{};
     };
 
     void reset() noexcept;
