@@ -15,6 +15,7 @@ add_executable(mobile3d_core_tests
     test_mesh_operations.cpp
     test_mesh_selection.cpp
     test_mesh_edit_transaction.cpp
+    test_mesh_edit_operators.cpp
 )
 
 target_link_libraries(mobile3d_core_tests
