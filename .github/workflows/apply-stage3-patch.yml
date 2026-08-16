@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.automation/stage3_patch.py'
+      - '.github/workflows/apply-stage3-patch.yml'
 
 permissions:
   contents: write
@@ -19,6 +20,7 @@ jobs:
       - name: Apply deterministic source transformation
         run: |
           python3 .automation/stage3_patch.py
+          git restore .github/workflows/host-tests.yml
           rm .automation/stage3_patch.py
           rm .github/workflows/apply-stage3-patch.yml
       - name: Commit patch result
