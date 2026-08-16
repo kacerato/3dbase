@@ -152,6 +152,49 @@ bool TransformObjectCommand::undo() {
     return captured_ && scene_.setTransform(object_, oldTransform_);
 }
 
+TransformObjectsCommand::TransformObjectsCommand(Scene& scene,
+                                                     std::vector<TransformChange> changes,
+                                                     std::string commandName)
+    : scene_(scene), changes_(std::move(changes)), commandName_(std::move(commandName)) {
+    if (commandName_.empty()) commandName_ = "Transform Objects";
+}
+
+bool TransformObjectsCommand::execute() {
+    if (changes_.empty()) return false;
+    for (std::size_t index = 0; index < changes_.size(); ++index) {
+        if (!scene_.contains(changes_[index].object)) return false;
+        for (std::size_t other = index + 1; other < changes_.size(); ++other) {
+            if (changes_[index].object == changes_[other].object) return false;
+        }
+    }
+    std::size_t applied = 0;
+    for (; applied < changes_.size(); ++applied) {
+        if (!scene_.setTransform(changes_[applied].object, changes_[applied].after)) break;
+    }
+    if (applied == changes_.size()) return true;
+    while (applied > 0) {
+        --applied;
+        (void)scene_.setTransform(changes_[applied].object, changes_[applied].before);
+    }
+    return false;
+}
+
+bool TransformObjectsCommand::undo() {
+    for (const auto& change : changes_) {
+        if (!scene_.contains(change.object)) return false;
+    }
+    std::size_t applied = 0;
+    for (; applied < changes_.size(); ++applied) {
+        if (!scene_.setTransform(changes_[applied].object, changes_[applied].before)) break;
+    }
+    if (applied == changes_.size()) return true;
+    while (applied > 0) {
+        --applied;
+        (void)scene_.setTransform(changes_[applied].object, changes_[applied].after);
+    }
+    return false;
+}
+
 ReparentObjectCommand::ReparentObjectCommand(Scene& scene, ObjectId object,
                                              std::optional<ObjectId> newParent)
     : scene_(scene), object_(object), newParent_(newParent) {}

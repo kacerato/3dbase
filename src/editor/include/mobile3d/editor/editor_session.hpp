@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mobile3d/core/command_stack.hpp"
+#include "mobile3d/core/commands/object_commands.hpp"
 #include "mobile3d/core/project_repository.hpp"
 #include "mobile3d/core/selection_model.hpp"
 
@@ -9,6 +10,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace m3d {
 
@@ -42,7 +44,7 @@ public:
     [[nodiscard]] bool discardAutosave(std::string* error = nullptr);
 
     [[nodiscard]] bool hasProject() const noexcept { return document_.has_value(); }
-    [[nodiscard]] bool isDirty() const noexcept { return recoveredDirty_ || commands_.isDirty(); }
+    [[nodiscard]] bool isDirty() const noexcept;
 
     [[nodiscard]] const ProjectDocument* document() const noexcept;
     [[nodiscard]] ProjectDocument* document() noexcept;
@@ -57,6 +59,12 @@ public:
     [[nodiscard]] bool deleteSelection();
     [[nodiscard]] bool renameObject(ObjectId object, std::string name);
     [[nodiscard]] bool transformObject(ObjectId object, const Transform& transform);
+    [[nodiscard]] bool beginTransformTransaction(const std::vector<ObjectId>& objects,
+                                                 std::string commandName = "Transform Objects");
+    [[nodiscard]] bool previewTransform(ObjectId object, const Transform& transform);
+    [[nodiscard]] bool commitTransformTransaction();
+    [[nodiscard]] bool cancelTransformTransaction();
+    [[nodiscard]] bool hasTransformTransaction() const noexcept { return transformTransaction_.has_value(); }
     [[nodiscard]] bool reparentObject(ObjectId object, std::optional<ObjectId> parent);
 
     [[nodiscard]] bool select(ObjectId object,
@@ -80,13 +88,20 @@ public:
     [[nodiscard]] std::uint64_t uiRevision() const noexcept { return uiRevision_; }
 
 private:
+    struct TransformTransactionState final {
+        std::vector<TransformChange> changes;
+        std::string commandName;
+    };
+
     [[nodiscard]] bool requireProject(std::string* error) const;
+    [[nodiscard]] bool transformTransactionHasChanges() const noexcept;
     void resetForDocument(bool recoveredDirty) noexcept;
     void sceneMutated(bool pruneSelection = true);
 
     std::optional<ProjectDocument> document_;
     CommandStack commands_;
     SelectionModel selection_;
+    std::optional<TransformTransactionState> transformTransaction_;
     Workspace workspace_{Workspace::Layout};
     bool recoveredDirty_{false};
     std::uint64_t sceneRevision_{0};

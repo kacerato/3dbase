@@ -3,6 +3,7 @@
 #include "mobile3d/core/commands/object_commands.hpp"
 #include "mobile3d/core/composite_command.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -43,6 +44,7 @@ bool EditorSession::openProject(const std::filesystem::path& root, std::string* 
 }
 
 void EditorSession::closeProject() noexcept {
+    transformTransaction_.reset();
     document_.reset();
     commands_.clear();
     selection_.clear();
@@ -54,6 +56,10 @@ void EditorSession::closeProject() noexcept {
 
 bool EditorSession::saveProject(std::string* error) {
     if (!requireProject(error)) return false;
+    if (transformTransaction_) {
+        if (error) *error = "Cannot save during an active transform transaction";
+        return false;
+    }
     if (!ProjectRepository::save(*document_, error)) return false;
     commands_.markSaved();
     recoveredDirty_ = false;
@@ -67,6 +73,10 @@ bool EditorSession::saveProject(std::string* error) {
 
 bool EditorSession::writeAutosave(std::string* error) const {
     if (!requireProject(error)) return false;
+    if (transformTransaction_) {
+        if (error) *error = "Cannot autosave during an active transform transaction";
+        return false;
+    }
     return ProjectRepository::writeAutosave(*document_, error);
 }
 
@@ -94,12 +104,17 @@ bool EditorSession::discardAutosave(std::string* error) {
     return ProjectRepository::clearAutosave(document_->root, error);
 }
 
+bool EditorSession::isDirty() const noexcept {
+    return recoveredDirty_ || commands_.isDirty() || transformTransactionHasChanges();
+}
+
 const ProjectDocument* EditorSession::document() const noexcept { return document_ ? &*document_ : nullptr; }
 ProjectDocument* EditorSession::document() noexcept { return document_ ? &*document_ : nullptr; }
 const Scene* EditorSession::scene() const noexcept { return document_ ? &document_->scene : nullptr; }
 Scene* EditorSession::scene() noexcept { return document_ ? &document_->scene : nullptr; }
 
 std::optional<ObjectId> EditorSession::createObject(ObjectType type, std::string name,
+    if (transformTransaction_) return std::nullopt;
                                                      std::optional<ObjectId> parent) {
     if (!document_) return std::nullopt;
     if (type == ObjectType::Mesh) {
@@ -117,6 +132,7 @@ std::optional<ObjectId> EditorSession::createObject(ObjectType type, std::string
 }
 
 std::optional<ObjectId> EditorSession::createMeshObject(MeshResource resource, std::string name,
+    if (transformTransaction_) return std::nullopt;
                                                          std::optional<ObjectId> parent) {
     if (!document_) return std::nullopt;
     auto command = std::make_unique<CreateMeshObjectCommand>(document_->scene, std::move(resource),
@@ -131,6 +147,7 @@ std::optional<ObjectId> EditorSession::createMeshObject(MeshResource resource, s
 }
 
 bool EditorSession::deleteObject(ObjectId object) {
+    if (transformTransaction_) return false;
     if (!document_ || !document_->scene.contains(object)) return false;
     if (!commands_.execute(std::make_unique<DeleteObjectCommand>(document_->scene, object))) return false;
     sceneMutated(true);
@@ -138,6 +155,7 @@ bool EditorSession::deleteObject(ObjectId object) {
 }
 
 bool EditorSession::deleteSelection() {
+    if (transformTransaction_) return false;
     if (!document_ || selection_.empty()) return false;
     std::vector<ObjectId> roots;
     roots.reserve(selection_.size());
@@ -170,6 +188,7 @@ bool EditorSession::deleteSelection() {
 }
 
 bool EditorSession::renameObject(ObjectId object, std::string name) {
+    if (transformTransaction_) return false;
     if (!document_ || !document_->scene.contains(object)) return false;
     if (!commands_.execute(std::make_unique<RenameObjectCommand>(document_->scene, object, std::move(name)))) return false;
     sceneMutated(false);
@@ -177,13 +196,89 @@ bool EditorSession::renameObject(ObjectId object, std::string name) {
 }
 
 bool EditorSession::transformObject(ObjectId object, const Transform& transform) {
+    if (transformTransaction_) return false;
     if (!document_ || !document_->scene.contains(object)) return false;
     if (!commands_.execute(std::make_unique<TransformObjectCommand>(document_->scene, object, transform))) return false;
     sceneMutated(false);
     return true;
 }
 
+bool EditorSession::beginTransformTransaction(const std::vector<ObjectId>& objects,
+                                              std::string commandName) {
+    if (!document_ || transformTransaction_ || objects.empty()) return false;
+    TransformTransactionState transaction;
+    transaction.commandName = commandName.empty() ? "Transform Objects" : std::move(commandName);
+    transaction.changes.reserve(objects.size());
+    for (const auto objectId : objects) {
+        const auto* object = document_->scene.find(objectId);
+        if (!object) return false;
+        const auto duplicate = std::find_if(transaction.changes.cbegin(), transaction.changes.cend(),
+                                            [objectId](const TransformChange& change) {
+                                                return change.object == objectId;
+                                            });
+        if (duplicate != transaction.changes.cend()) return false;
+        transaction.changes.push_back(TransformChange{
+            .object = objectId,
+            .before = object->localTransform,
+            .after = object->localTransform,
+        });
+    }
+    transformTransaction_ = std::move(transaction);
+    return true;
+}
+
+bool EditorSession::previewTransform(ObjectId object, const Transform& transform) {
+    if (!document_ || !transformTransaction_) return false;
+    auto found = std::find_if(transformTransaction_->changes.begin(), transformTransaction_->changes.end(),
+                              [object](const TransformChange& change) {
+                                  return change.object == object;
+                              });
+    if (found == transformTransaction_->changes.end()) return false;
+    if (!document_->scene.setTransform(object, transform)) return false;
+    found->after = transform;
+    ++sceneRevision_;
+    return true;
+}
+
+bool EditorSession::commitTransformTransaction() {
+    if (!document_ || !transformTransaction_) return false;
+    std::vector<TransformChange> changes;
+    changes.reserve(transformTransaction_->changes.size());
+    for (const auto& change : transformTransaction_->changes) {
+        if (change.before != change.after) changes.push_back(change);
+    }
+    const std::string commandName = transformTransaction_->commandName;
+    if (changes.empty()) {
+        transformTransaction_.reset();
+        return true;
+    }
+    auto command = std::make_unique<TransformObjectsCommand>(document_->scene, changes, commandName);
+    if (!commands_.execute(std::move(command))) {
+        for (const auto& change : changes) {
+            (void)document_->scene.setTransform(change.object, change.before);
+        }
+        transformTransaction_.reset();
+        ++sceneRevision_;
+        return false;
+    }
+    transformTransaction_.reset();
+    sceneMutated(false);
+    return true;
+}
+
+bool EditorSession::cancelTransformTransaction() {
+    if (!document_ || !transformTransaction_) return false;
+    bool success = true;
+    for (const auto& change : transformTransaction_->changes) {
+        success = document_->scene.setTransform(change.object, change.before) && success;
+    }
+    transformTransaction_.reset();
+    ++sceneRevision_;
+    return success;
+}
+
 bool EditorSession::reparentObject(ObjectId object, std::optional<ObjectId> parent) {
+    if (transformTransaction_) return false;
     if (!document_ || !document_->scene.contains(object)) return false;
     if (!commands_.execute(std::make_unique<ReparentObjectCommand>(document_->scene, object, parent))) return false;
     sceneMutated(false);
@@ -191,24 +286,27 @@ bool EditorSession::reparentObject(ObjectId object, std::optional<ObjectId> pare
 }
 
 bool EditorSession::select(ObjectId object, SelectionMode mode) {
+    if (transformTransaction_) return false;
     if (!document_ || !selection_.select(document_->scene, object, mode)) return false;
     ++selectionRevision_;
     return true;
 }
 
 void EditorSession::clearSelection() noexcept {
-    if (selection_.empty()) return;
+    if (transformTransaction_ || selection_.empty()) return;
     selection_.clear();
     ++selectionRevision_;
 }
 
 bool EditorSession::undo() {
+    if (transformTransaction_) return false;
     if (!document_ || !commands_.undo()) return false;
     sceneMutated(true);
     return true;
 }
 
 bool EditorSession::redo() {
+    if (transformTransaction_) return false;
     if (!document_ || !commands_.redo()) return false;
     sceneMutated(true);
     return true;
@@ -226,7 +324,14 @@ bool EditorSession::requireProject(std::string* error) const {
     return false;
 }
 
+bool EditorSession::transformTransactionHasChanges() const noexcept {
+    if (!transformTransaction_) return false;
+    return std::any_of(transformTransaction_->changes.cbegin(), transformTransaction_->changes.cend(),
+                       [](const TransformChange& change) { return change.before != change.after; });
+}
+
 void EditorSession::resetForDocument(bool recoveredDirty) noexcept {
+    transformTransaction_.reset();
     commands_.clear();
     commands_.markSaved();
     selection_.clear();

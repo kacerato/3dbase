@@ -90,6 +90,27 @@ private:
     bool captured_{false};
 };
 
+struct TransformChange final {
+    ObjectId object{};
+    Transform before{};
+    Transform after{};
+};
+
+class TransformObjectsCommand final : public EditorCommand {
+public:
+    TransformObjectsCommand(Scene& scene, std::vector<TransformChange> changes,
+                            std::string commandName = "Transform Objects");
+
+    [[nodiscard]] std::string_view name() const noexcept override { return commandName_; }
+    [[nodiscard]] bool execute() override;
+    [[nodiscard]] bool undo() override;
+
+private:
+    Scene& scene_;
+    std::vector<TransformChange> changes_;
+    std::string commandName_;
+};
+
 class ReparentObjectCommand final : public EditorCommand {
 public:
     ReparentObjectCommand(Scene& scene, ObjectId object, std::optional<ObjectId> newParent);

@@ -178,3 +178,69 @@ TEST_CASE("workspace changes are editor state and do not dirty the scene") {
     REQUIRE(session.uiRevision() == previousRevision + 1);
     REQUIRE(!session.isDirty());
 }
+
+
+TEST_CASE("transform transaction previews many objects but commits one undo step") {
+    const auto path = uniqueProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Transform Transaction", &error));
+    const auto first = session.createObject(m3d::ObjectType::Empty, "First");
+    const auto second = session.createObject(m3d::ObjectType::Empty, "Second");
+    REQUIRE(first.has_value());
+    REQUIRE(second.has_value());
+    REQUIRE(session.saveProject(&error));
+
+    const auto firstBefore = session.scene()->find(*first)->localTransform;
+    const auto secondBefore = session.scene()->find(*second)->localTransform;
+    REQUIRE(session.beginTransformTransaction({*first, *second}, "Move Objects"));
+    REQUIRE(session.hasTransformTransaction());
+    REQUIRE(!session.isDirty());
+
+    auto firstPreview = firstBefore;
+    firstPreview.position = {1.0F, 2.0F, 3.0F};
+    auto secondPreview = secondBefore;
+    secondPreview.position = {-4.0F, 5.0F, 6.0F};
+    REQUIRE(session.previewTransform(*first, firstPreview));
+    REQUIRE(session.previewTransform(*second, secondPreview));
+    REQUIRE(session.isDirty());
+    REQUIRE(session.scene()->find(*first)->localTransform == firstPreview);
+    REQUIRE(session.scene()->find(*second)->localTransform == secondPreview);
+    REQUIRE(!session.saveProject(&error));
+    REQUIRE(!session.writeAutosave(&error));
+
+    REQUIRE(session.commitTransformTransaction());
+    REQUIRE(!session.hasTransformTransaction());
+    REQUIRE(session.nextUndoName() == "Move Objects");
+    REQUIRE(session.undo());
+    REQUIRE(session.scene()->find(*first)->localTransform == firstBefore);
+    REQUIRE(session.scene()->find(*second)->localTransform == secondBefore);
+    REQUIRE(session.redo());
+    REQUIRE(session.scene()->find(*first)->localTransform == firstPreview);
+    REQUIRE(session.scene()->find(*second)->localTransform == secondPreview);
+}
+
+TEST_CASE("cancelled transform transaction restores preview and does not create history") {
+    const auto path = uniqueProjectPath();
+    ProjectCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Cancel Transform", &error));
+    const auto object = session.createObject(m3d::ObjectType::Empty, "Object");
+    REQUIRE(object.has_value());
+    REQUIRE(session.saveProject(&error));
+    const auto previousUndo = session.nextUndoName();
+    const auto before = session.scene()->find(*object)->localTransform;
+    REQUIRE(session.beginTransformTransaction({*object}, "Move Object"));
+    auto preview = before;
+    preview.position.x = 12.0F;
+    REQUIRE(session.previewTransform(*object, preview));
+    REQUIRE(session.isDirty());
+    REQUIRE(!session.select(*object, m3d::SelectionMode::Replace));
+    REQUIRE(!session.undo());
+    REQUIRE(session.cancelTransformTransaction());
+    REQUIRE(session.scene()->find(*object)->localTransform == before);
+    REQUIRE(session.nextUndoName() == previousUndo);
+    REQUIRE(!session.isDirty());
+}
