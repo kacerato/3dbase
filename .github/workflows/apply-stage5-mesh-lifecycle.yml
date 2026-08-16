@@ -1,0 +1,29 @@
+name: Apply Stage 5 Mesh Lifecycle
+on:
+  push:
+    branches: [main]
+    paths: ['.automation/stage5_mesh_lifecycle.py']
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Apply lifecycle hardening
+        run: python3 .automation/stage5_mesh_lifecycle.py
+      - name: Configure strict build
+        run: cmake -S . -B /tmp/mobile3d-stage5-lifecycle -G Ninja -DMOBILE3D_BUILD_TESTS=ON -DMOBILE3D_BUILD_QT_APP=OFF -DMOBILE3D_WARNINGS_AS_ERRORS=ON
+      - name: Build
+        run: cmake --build /tmp/mobile3d-stage5-lifecycle --parallel
+      - name: Test
+        run: ctest --test-dir /tmp/mobile3d-stage5-lifecycle --output-on-failure
+      - name: Commit validated lifecycle code
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src tests
+          git diff --cached --check
+          git commit -m "harden mesh edit transaction lifecycle"
+          git push origin HEAD:main
