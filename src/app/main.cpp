@@ -120,6 +120,7 @@ int main(int argc, char* argv[]) {
                                 viewport->recordedFrameCount() > 0 &&
                                 viewport->recordedMeshDrawCount() > 0 &&
                                 viewport->recordedOutlineDrawCount() > 0 &&
+                                viewport->recordedGizmoDrawCount() > 0 &&
                                 viewport->completedPickCount() > 0 &&
                                 viewport->successfulPickCount() > 0 &&
                                 (!requirePipelineCache || viewport->pipelineCacheLoaded());
