@@ -115,6 +115,8 @@ private:
     QPointF transformStartPosition_;
     QPointF transformPivotScreen_;
     QPointF transformAxisScreenUnit_;
+    QPointF transformPlaneScreenVectorA_;
+    QPointF transformPlaneScreenVectorB_;
     QPointF lastMousePosition_;
     QPointF mousePressPosition_;
     QPointF lastTouchCentroid_;
