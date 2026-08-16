@@ -236,8 +236,8 @@ bool EditorSession::setObjectVisible(ObjectId object, bool visible) {
     auto command = std::make_unique<SetObjectVisibilityCommand>(document_->scene, object, visible);
     if (!commands_.execute(std::move(command))) return false;
     if (!visible && selection_.contains(object)) {
-        selection_.remove(object);
-        ++selectionRevision_;
+        const bool removed = selection_.remove(object);
+        if (removed) ++selectionRevision_;
     }
     sceneMutated(false);
     return true;
