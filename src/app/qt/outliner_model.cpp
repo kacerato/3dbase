@@ -63,8 +63,8 @@ QHash<int, QByteArray> OutlinerModel::roleNames() const {
         {SelectedRole, "selected"},
         {ActiveRole, "active"},
         {HasChildrenRole, "hasChildren"},
-        {VisibleRole, "visible"},
-        {LockedRole, "locked"},
+        {VisibleRole, "objectVisible"},
+        {LockedRole, "objectLocked"},
     };
 }
 
