@@ -1,10 +1,12 @@
 #pragma once
 
 #include "mobile3d/core/command_stack.hpp"
+#include "mobile3d/core/commands/mesh_commands.hpp"
 #include "mobile3d/core/commands/object_commands.hpp"
 #include "mobile3d/core/commands/organization_commands.hpp"
 #include "mobile3d/core/project_repository.hpp"
 #include "mobile3d/core/selection_model.hpp"
+#include "mobile3d/editor/mesh_selection.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -71,6 +73,22 @@ public:
     [[nodiscard]] bool hasTransformTransaction() const noexcept { return transformTransaction_.has_value(); }
     [[nodiscard]] bool reparentObject(ObjectId object, std::optional<ObjectId> parent);
 
+    [[nodiscard]] bool beginMeshEdit(ObjectId object, std::string* error = nullptr);
+    [[nodiscard]] bool commitMeshEdit(std::string commandName = "Edit Mesh",
+                                      std::string* error = nullptr);
+    [[nodiscard]] bool cancelMeshEdit();
+    [[nodiscard]] bool hasMeshEditTransaction() const noexcept { return meshEditTransaction_.has_value(); }
+    [[nodiscard]] const EditableMesh* editableMesh() const noexcept;
+    [[nodiscard]] const MeshSelectionModel* meshSelection() const noexcept;
+    [[nodiscard]] bool setMeshSelectionMode(MeshSelectionMode mode) noexcept;
+    [[nodiscard]] bool selectMeshVertex(EditableVertexId vertex,
+                                        MeshSelectionAction action = MeshSelectionAction::Replace);
+    [[nodiscard]] bool selectMeshEdge(EditableEdgeId edge,
+                                      MeshSelectionAction action = MeshSelectionAction::Replace);
+    [[nodiscard]] bool selectMeshFace(EditableFaceId face,
+                                      MeshSelectionAction action = MeshSelectionAction::Replace);
+    [[nodiscard]] bool moveSelectedMeshVertices(Vec3 delta, std::string* error = nullptr);
+
     [[nodiscard]] bool select(ObjectId object,
                               SelectionMode mode = SelectionMode::Replace);
     void clearSelection() noexcept;
@@ -115,9 +133,22 @@ private:
         std::string commandName;
     };
 
+    struct MeshEditTransactionState final {
+        ObjectId object{};
+        ResourceId resource{};
+        MeshResource before{};
+        EditableMesh working{};
+        MeshSelectionModel selection{};
+        bool dirty{false};
+    };
+
     [[nodiscard]] bool requireProject(std::string* error) const;
     [[nodiscard]] bool transformTransactionHasChanges() const noexcept;
     [[nodiscard]] bool objectLockedByActiveLayer(ObjectId object) const noexcept;
+    [[nodiscard]] bool hasActiveMutationTransaction() const noexcept {
+        return transformTransaction_.has_value() || meshEditTransaction_.has_value();
+    }
+    [[nodiscard]] bool applyMeshEditPreview(const EditableMesh& candidate, std::string* error);
     void pruneSelectionForActiveLayer();
     void resetForDocument(bool recoveredDirty) noexcept;
     void sceneMutated(bool pruneSelection = true);
@@ -127,6 +158,7 @@ private:
     SelectionModel selection_;
     std::optional<LayerId> activeLayer_;
     std::optional<TransformTransactionState> transformTransaction_;
+    std::optional<MeshEditTransactionState> meshEditTransaction_;
     Workspace workspace_{Workspace::Layout};
     bool recoveredDirty_{false};
     std::uint64_t sceneRevision_{0};

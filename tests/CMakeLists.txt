@@ -13,6 +13,7 @@ add_executable(mobile3d_core_tests
     test_transform_manipulator.cpp
     test_editable_mesh.cpp
     test_mesh_selection.cpp
+    test_mesh_edit_transaction.cpp
 )
 
 target_link_libraries(mobile3d_core_tests
