@@ -114,8 +114,8 @@ const Scene* EditorSession::scene() const noexcept { return document_ ? &documen
 Scene* EditorSession::scene() noexcept { return document_ ? &document_->scene : nullptr; }
 
 std::optional<ObjectId> EditorSession::createObject(ObjectType type, std::string name,
-    if (transformTransaction_) return std::nullopt;
                                                      std::optional<ObjectId> parent) {
+    if (transformTransaction_) return std::nullopt;
     if (!document_) return std::nullopt;
     if (type == ObjectType::Mesh) {
         const std::string geometryName = name.empty() ? "Mesh Geometry" : name + " Geometry";
@@ -132,8 +132,8 @@ std::optional<ObjectId> EditorSession::createObject(ObjectType type, std::string
 }
 
 std::optional<ObjectId> EditorSession::createMeshObject(MeshResource resource, std::string name,
-    if (transformTransaction_) return std::nullopt;
                                                          std::optional<ObjectId> parent) {
+    if (transformTransaction_) return std::nullopt;
     if (!document_) return std::nullopt;
     auto command = std::make_unique<CreateMeshObjectCommand>(document_->scene, std::move(resource),
                                                               std::move(name), parent);
