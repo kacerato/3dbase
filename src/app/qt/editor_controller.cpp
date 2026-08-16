@@ -124,7 +124,39 @@ double EditorController::scaleX() const { const auto* object = activeObject(); r
 double EditorController::scaleY() const { const auto* object = activeObject(); return object ? object->localTransform.scale.y : 1.0; }
 double EditorController::scaleZ() const { const auto* object = activeObject(); return object ? object->localTransform.scale.z : 1.0; }
 
+QString EditorController::transformTool() const {
+    switch (transformTool_) {
+    case m3d::TransformTool::Translate: return QStringLiteral("Move");
+    case m3d::TransformTool::Rotate: return QStringLiteral("Rotate");
+    case m3d::TransformTool::Scale: return QStringLiteral("Scale");
+    }
+    return QStringLiteral("Move");
+}
+
+QString EditorController::transformSpace() const {
+    return transformSpace_ == m3d::TransformSpace::Local
+        ? QStringLiteral("Local") : QStringLiteral("Global");
+}
+
+QString EditorController::pivotMode() const {
+    switch (pivotMode_) {
+    case m3d::PivotMode::Median: return QStringLiteral("Median");
+    case m3d::PivotMode::Active: return QStringLiteral("Active");
+    case m3d::PivotMode::IndividualOrigins: return QStringLiteral("Individual");
+    }
+    return QStringLiteral("Median");
+}
+
+m3d::TransformSnapSettings EditorController::transformSnapSettings() const noexcept {
+    m3d::TransformSnapSettings settings;
+    settings.translationEnabled = transformSnapEnabled_;
+    settings.rotationEnabled = transformSnapEnabled_;
+    settings.scaleEnabled = transformSnapEnabled_;
+    return settings;
+}
+
 bool EditorController::createProject(const QString& name) {
+    if (manipulator_.active()) (void)cancelViewportTransform();
     const QString cleaned = cleanProjectName(name);
     if (cleaned.isEmpty()) {
         setStatus(QStringLiteral("Project name cannot be empty."));
@@ -147,6 +179,7 @@ bool EditorController::createProject(const QString& name) {
 }
 
 bool EditorController::openProject(const QString& path) {
+    if (manipulator_.active()) (void)cancelViewportTransform();
     QString root = QDir::cleanPath(path.trimmed());
     if (root.isEmpty()) {
         setStatus(QStringLiteral("Project path cannot be empty."));
@@ -203,6 +236,7 @@ bool EditorController::autosaveNow() {
 }
 
 bool EditorController::recoverAutosave() {
+    if (manipulator_.active()) (void)cancelViewportTransform();
     std::string error;
     if (!session_.recoverAutosave(&error)) {
         setStatus(QString::fromStdString(error));
@@ -226,6 +260,7 @@ bool EditorController::discardAutosave() {
 }
 
 void EditorController::closeProject() {
+    if (manipulator_.active()) (void)cancelViewportTransform();
     if (session_.isDirty()) {
         (void)autosaveNow();
     }
@@ -361,6 +396,103 @@ bool EditorController::setWorkspace(const QString& name) {
     return true;
 }
 
+bool EditorController::setTransformTool(const QString& name) {
+    const auto value = transformToolFromName(name);
+    if (!value) return false;
+    if (manipulator_.active()) (void)cancelViewportTransform();
+    if (transformTool_ == *value) return true;
+    transformTool_ = *value;
+    emit transformSettingsChanged();
+    return true;
+}
+
+bool EditorController::setTransformSpace(const QString& name) {
+    const auto value = transformSpaceFromName(name);
+    if (!value) return false;
+    if (manipulator_.active()) (void)cancelViewportTransform();
+    if (transformSpace_ == *value) return true;
+    transformSpace_ = *value;
+    emit transformSettingsChanged();
+    return true;
+}
+
+bool EditorController::setPivotMode(const QString& name) {
+    const auto value = pivotModeFromName(name);
+    if (!value) return false;
+    if (manipulator_.active()) (void)cancelViewportTransform();
+    if (pivotMode_ == *value) return true;
+    pivotMode_ = *value;
+    emit transformSettingsChanged();
+    return true;
+}
+
+void EditorController::setTransformSnapEnabled(bool enabled) {
+    if (manipulator_.active()) (void)cancelViewportTransform();
+    if (transformSnapEnabled_ == enabled) return;
+    transformSnapEnabled_ = enabled;
+    emit transformSettingsChanged();
+}
+
+bool EditorController::beginViewportTransform(m3d::TransformConstraint constraint) {
+    bool started = false;
+    const auto snapping = transformSnapSettings();
+    switch (transformTool_) {
+    case m3d::TransformTool::Translate:
+        started = manipulator_.beginTranslate(session_, transformSpace_, constraint, snapping);
+        break;
+    case m3d::TransformTool::Rotate:
+        started = manipulator_.beginRotate(session_, transformSpace_, constraint, pivotMode_, snapping);
+        break;
+    case m3d::TransformTool::Scale:
+        started = manipulator_.beginScale(session_, transformSpace_, constraint, pivotMode_, snapping);
+        break;
+    }
+    if (!started) return false;
+    setStatus(QStringLiteral("%1 transform started.").arg(transformTool()));
+    emit transformActivityChanged();
+    emit historyChanged();
+    return true;
+}
+
+bool EditorController::updateViewportTranslation(m3d::Vec3 gizmoComponents) {
+    if (transformTool_ != m3d::TransformTool::Translate ||
+        !manipulator_.updateTranslation(gizmoComponents)) return false;
+    refreshTransformPreview();
+    return true;
+}
+
+bool EditorController::updateViewportRotation(float angleRadians) {
+    if (transformTool_ != m3d::TransformTool::Rotate ||
+        !manipulator_.updateRotation(angleRadians)) return false;
+    refreshTransformPreview();
+    return true;
+}
+
+bool EditorController::updateViewportScale(float factor) {
+    if (transformTool_ != m3d::TransformTool::Scale ||
+        !manipulator_.updateScale(factor)) return false;
+    refreshTransformPreview();
+    return true;
+}
+
+bool EditorController::commitViewportTransform() {
+    if (!manipulator_.active()) return false;
+    if (!manipulator_.commit()) return false;
+    setStatus(QStringLiteral("Transform committed."));
+    emit transformActivityChanged();
+    refreshUi();
+    return true;
+}
+
+bool EditorController::cancelViewportTransform() {
+    if (!manipulator_.active()) return false;
+    if (!manipulator_.cancel()) return false;
+    setStatus(QStringLiteral("Transform cancelled."));
+    emit transformActivityChanged();
+    refreshUi();
+    return true;
+}
+
 void EditorController::handleApplicationState(Qt::ApplicationState state) {
     if (state != Qt::ApplicationActive && session_.hasProject() && session_.isDirty()) {
         (void)autosaveNow();
@@ -406,6 +538,31 @@ std::optional<m3d::ObjectType> EditorController::objectTypeFromName(const QStrin
     return std::nullopt;
 }
 
+std::optional<m3d::TransformTool> EditorController::transformToolFromName(const QString& name) {
+    const QString value = name.trimmed().toLower();
+    if (value == QStringLiteral("move") || value == QStringLiteral("translate"))
+        return m3d::TransformTool::Translate;
+    if (value == QStringLiteral("rotate")) return m3d::TransformTool::Rotate;
+    if (value == QStringLiteral("scale")) return m3d::TransformTool::Scale;
+    return std::nullopt;
+}
+
+std::optional<m3d::TransformSpace> EditorController::transformSpaceFromName(const QString& name) {
+    const QString value = name.trimmed().toLower();
+    if (value == QStringLiteral("global")) return m3d::TransformSpace::Global;
+    if (value == QStringLiteral("local")) return m3d::TransformSpace::Local;
+    return std::nullopt;
+}
+
+std::optional<m3d::PivotMode> EditorController::pivotModeFromName(const QString& name) {
+    const QString value = name.trimmed().toLower();
+    if (value == QStringLiteral("median")) return m3d::PivotMode::Median;
+    if (value == QStringLiteral("active")) return m3d::PivotMode::Active;
+    if (value == QStringLiteral("individual") || value == QStringLiteral("individual origins"))
+        return m3d::PivotMode::IndividualOrigins;
+    return std::nullopt;
+}
+
 std::optional<m3d::Workspace> EditorController::workspaceFromName(const QString& name) {
     const QString value = name.trimmed().toLower();
     if (value == QStringLiteral("layout")) return m3d::Workspace::Layout;
@@ -435,6 +592,11 @@ void EditorController::refreshUi() {
     emit projectStateChanged();
     emit historyChanged();
     emit selectionChanged();
+}
+
+void EditorController::refreshTransformPreview() {
+    emit selectionChanged();
+    emit historyChanged();
 }
 
 void EditorController::setStatus(QString message) {
