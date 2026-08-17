@@ -317,4 +317,54 @@ bool EditorSession::loopCutSelectedMeshEdge(std::uint32_t cuts, std::string* err
     return true;
 }
 
+
+bool EditorSession::flipSelectedMeshNormalComponents(std::string* error) {
+    if (!meshEditTransaction_) {
+        if (error) *error = "Edit Mode is not active";
+        return false;
+    }
+    auto& selection = meshEditTransaction_->selection;
+    if (selection.mode() != MeshSelectionMode::Face) {
+        if (error) *error = "Flip Normals requires Face selection mode";
+        return false;
+    }
+    const auto selected = selection.selectedFaces();
+    if (selected.empty()) {
+        if (error) *error = "Flip Normals requires at least one selected face";
+        return false;
+    }
+
+    EditableMesh candidate = meshEditTransaction_->working;
+    const auto flipped = candidate.flipFaceComponents(selected, error);
+    if (!flipped || flipped->empty() || !applyMeshEditPreview(candidate, error)) return false;
+
+    selection.clear();
+    selection.setMode(MeshSelectionMode::Face);
+    bool first = true;
+    for (const auto face : *flipped) {
+        (void)selection.select(meshEditTransaction_->working, face,
+                               first ? MeshSelectionAction::Replace : MeshSelectionAction::Add);
+        first = false;
+    }
+    ++selectionRevision_;
+    ++uiRevision_;
+    if (error) error->clear();
+    return true;
+}
+
+bool EditorSession::recalculateMeshNormalsOutside(std::string* error) {
+    if (!meshEditTransaction_) {
+        if (error) *error = "Edit Mode is not active";
+        return false;
+    }
+    EditableMesh candidate = meshEditTransaction_->working;
+    const auto flippedComponents = candidate.recalculateOutside(error);
+    if (!flippedComponents) return false;
+    if (*flippedComponents == 0U) {
+        if (error) error->clear();
+        return true;
+    }
+    return applyMeshEditPreview(candidate, error);
+}
+
 } // namespace m3d

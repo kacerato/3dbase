@@ -452,3 +452,73 @@ TEST_CASE("multi loop cut rejects zero and excessive cut counts atomically") {
     REQUIRE(mesh.snapshot().edges == before.edges);
     REQUIRE(mesh.snapshot().faces == before.faces);
 }
+
+TEST_CASE("flip normals reverses an entire connected component consistently") {
+    auto mesh = m3d::EditableMesh::makeCube(2.0F);
+    const auto seed = mesh.faces().front().id;
+    const std::array<m3d::EditableFaceId,1> seeds{seed};
+    std::string error;
+    const auto flipped = mesh.flipFaceComponents(seeds, &error);
+    REQUIRE(flipped.has_value());
+    REQUIRE(flipped->size() == 6U);
+    REQUIRE(error.empty());
+    REQUIRE(mesh.validate(&error));
+
+    float orientationScore = 0.0F;
+    for (const auto& face : mesh.faces()) {
+        const auto normal = mesh.faceNormal(face.id);
+        const auto loop = mesh.faceVertices(face.id);
+        REQUIRE(normal.has_value());
+        REQUIRE(!loop.empty());
+        m3d::Vec3 center{};
+        for (const auto vertexId : loop) {
+            const auto* vertex = mesh.findVertex(vertexId);
+            REQUIRE(vertex != nullptr);
+            center.x += vertex->position.x;
+            center.y += vertex->position.y;
+            center.z += vertex->position.z;
+        }
+        const float inverse = 1.0F / static_cast<float>(loop.size());
+        center.x *= inverse; center.y *= inverse; center.z *= inverse;
+        orientationScore += normal->x * center.x + normal->y * center.y + normal->z * center.z;
+    }
+    REQUIRE(orientationScore < 0.0F);
+}
+
+TEST_CASE("recalculate outside restores outward orientation for a closed component") {
+    auto mesh = m3d::EditableMesh::makeCube(2.0F);
+    const std::array<m3d::EditableFaceId,1> seeds{mesh.faces().front().id};
+    std::string error;
+    REQUIRE(mesh.flipFaceComponents(seeds, &error).has_value());
+    const auto flippedComponents = mesh.recalculateOutside(&error);
+    REQUIRE(flippedComponents.has_value());
+    REQUIRE(*flippedComponents == 1U);
+    REQUIRE(error.empty());
+    REQUIRE(mesh.validate(&error));
+
+    m3d::MeshResource render;
+    render.id = m3d::ResourceId::generate();
+    render.name = "Normals Cube";
+    render.authoring = mesh;
+    REQUIRE(render.rebuildFromAuthoring(&error));
+    for (const auto& vertex : render.vertices) {
+        const float outward = vertex.normal.x * vertex.position.x +
+                              vertex.normal.y * vertex.position.y +
+                              vertex.normal.z * vertex.position.z;
+        REQUIRE(outward > 0.0F);
+    }
+}
+
+TEST_CASE("recalculate outside leaves open components unchanged") {
+    auto mesh = m3d::EditableMesh::makeCube();
+    std::string error;
+    REQUIRE(mesh.deleteFaces(std::array<m3d::EditableFaceId,1>{mesh.faces().front().id}, &error));
+    const auto before = mesh.snapshot();
+    const auto result = mesh.recalculateOutside(&error);
+    REQUIRE(result.has_value());
+    REQUIRE(*result == 0U);
+    REQUIRE(mesh.snapshot().vertices == before.vertices);
+    REQUIRE(mesh.snapshot().halfEdges == before.halfEdges);
+    REQUIRE(mesh.snapshot().edges == before.edges);
+    REQUIRE(mesh.snapshot().faces == before.faces);
+}

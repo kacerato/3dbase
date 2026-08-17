@@ -102,6 +102,8 @@ public:
     [[nodiscard]] bool loopCutSelectedMeshEdge(std::uint32_t cuts,
                                                std::string* error = nullptr);
     [[nodiscard]] bool deleteSelectedMeshElements(std::string* error = nullptr);
+    [[nodiscard]] bool flipSelectedMeshNormalComponents(std::string* error = nullptr);
+    [[nodiscard]] bool recalculateMeshNormalsOutside(std::string* error = nullptr);
 
     [[nodiscard]] bool select(ObjectId object,
                               SelectionMode mode = SelectionMode::Replace);

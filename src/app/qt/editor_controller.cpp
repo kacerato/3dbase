@@ -822,6 +822,30 @@ bool EditorController::deleteSelectedMeshElements() {
     return true;
 }
 
+bool EditorController::flipSelectedNormals() {
+    std::string error;
+    if (!session_.flipSelectedMeshNormalComponents(&error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    setStatus(QStringLiteral("Connected face component normals flipped."));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
+bool EditorController::recalculateNormalsOutside() {
+    std::string error;
+    if (!session_.recalculateMeshNormalsOutside(&error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    setStatus(QStringLiteral("Closed component normals recalculated outside."));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
 bool EditorController::beginViewportTransform(m3d::TransformConstraint constraint) {
     bool started = false;
     const auto snapping = transformSnapSettings();

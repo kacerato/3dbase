@@ -126,6 +126,10 @@ public:
                                    std::string* error = nullptr);
     [[nodiscard]] bool deleteVertices(std::span<const EditableVertexId> vertices,
                                       std::string* error = nullptr);
+    [[nodiscard]] std::optional<std::vector<EditableFaceId>> flipFaceComponents(
+        std::span<const EditableFaceId> seedFaces, std::string* error = nullptr);
+    [[nodiscard]] std::optional<std::size_t> recalculateOutside(
+        std::string* error = nullptr);
 
     [[nodiscard]] std::size_t vertexCount() const noexcept { return vertexCount_; }
     [[nodiscard]] std::size_t halfEdgeCount() const noexcept { return halfEdgeCount_; }

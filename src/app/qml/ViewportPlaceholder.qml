@@ -226,6 +226,20 @@ Rectangle {
         Button {
             height: 38
             visible: root.controller.editMode
+            text: "Flip Normals"
+            enabled: root.controller.meshSelectionMode === "Face"
+                     && root.controller.selectedMeshElementCount > 0
+            onClicked: root.controller.flipSelectedNormals()
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
+            text: "Normals Out"
+            onClicked: root.controller.recalculateNormalsOutside()
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
             text: "Delete"
             enabled: root.controller.selectedMeshElementCount > 0
             onClicked: root.controller.deleteSelectedMeshElements()

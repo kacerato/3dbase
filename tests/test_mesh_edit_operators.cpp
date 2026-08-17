@@ -432,3 +432,82 @@ TEST_CASE("edit mode multi loop cut remains one committed mesh transaction") {
     REQUIRE(session.scene()->findMeshResource(resource)->authoring->vertexCount() == 20U);
     REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 18U);
 }
+
+TEST_CASE("edit mode flip normals updates live render normals and cancel restores outward cube") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Face));
+    REQUIRE(session.selectMeshFace(session.editableMesh()->faces().front().id));
+    REQUIRE(session.flipSelectedMeshNormalComponents(&error));
+    REQUIRE(error.empty());
+    REQUIRE(session.meshSelection()->selectedFaces().size() == 6U);
+
+    const auto resourceId = *session.scene()->find(*object)->meshResource;
+    const auto* preview = session.scene()->findMeshResource(resourceId);
+    REQUIRE(preview != nullptr);
+    for (const auto& vertex : preview->vertices) {
+        const float orientation = vertex.normal.x * vertex.position.x +
+                                  vertex.normal.y * vertex.position.y +
+                                  vertex.normal.z * vertex.position.z;
+        REQUIRE(orientation < 0.0F);
+    }
+    REQUIRE(session.cancelMeshEdit());
+    const auto* restored = session.scene()->findMeshResource(resourceId);
+    for (const auto& vertex : restored->vertices) {
+        const float orientation = vertex.normal.x * vertex.position.x +
+                                  vertex.normal.y * vertex.position.y +
+                                  vertex.normal.z * vertex.position.z;
+        REQUIRE(orientation > 0.0F);
+    }
+}
+
+TEST_CASE("flip then recalculate outside commits as one normals undo") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Face));
+    REQUIRE(session.selectMeshFace(session.editableMesh()->faces().front().id));
+    REQUIRE(session.flipSelectedMeshNormalComponents(&error));
+    REQUIRE(session.recalculateMeshNormalsOutside(&error));
+
+    const auto resourceId = *session.scene()->find(*object)->meshResource;
+    const auto* preview = session.scene()->findMeshResource(resourceId);
+    for (const auto& vertex : preview->vertices) {
+        const float orientation = vertex.normal.x * vertex.position.x +
+                                  vertex.normal.y * vertex.position.y +
+                                  vertex.normal.z * vertex.position.z;
+        REQUIRE(orientation > 0.0F);
+    }
+    REQUIRE(session.commitMeshEdit("Recalculate Normals", &error));
+    REQUIRE(session.nextUndoName() == "Recalculate Normals");
+    REQUIRE(session.undo());
+    REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->faceCount() == 6U);
+    REQUIRE(session.redo());
+    REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->faceCount() == 6U);
+}
+
+TEST_CASE("recalculate outside on open mesh is a clean no-op") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Face));
+    REQUIRE(session.selectMeshFace(session.editableMesh()->faces().front().id));
+    REQUIRE(session.deleteSelectedMeshElements(&error));
+    REQUIRE(session.commitMeshEdit("Open Mesh", &error));
+    REQUIRE(session.saveProject(&error));
+    REQUIRE(!session.isDirty());
+    REQUIRE(session.beginMeshEdit(*object, &error));
+    REQUIRE(session.recalculateMeshNormalsOutside(&error));
+    REQUIRE(!session.isDirty());
+    REQUIRE(session.cancelMeshEdit());
+}

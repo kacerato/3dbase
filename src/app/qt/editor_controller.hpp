@@ -167,6 +167,8 @@ public:
     Q_INVOKABLE bool bridgeSelectedBoundaries();
     Q_INVOKABLE bool loopCutSelectedEdge(int cuts = 1);
     Q_INVOKABLE bool deleteSelectedMeshElements();
+    Q_INVOKABLE bool flipSelectedNormals();
+    Q_INVOKABLE bool recalculateNormalsOutside();
 
     // Viewport-only interaction boundary. Vulkan/Qt input supplies deltas, while
     // all scene mutation remains inside the EditorSession transaction system.
