@@ -46,6 +46,10 @@ class EditorController final : public QObject {
     Q_PROPERTY(QStringList collectionNames READ collectionNames NOTIFY projectStateChanged)
     Q_PROPERTY(bool transformSnapEnabled READ transformSnapEnabled NOTIFY transformSettingsChanged)
     Q_PROPERTY(bool transformInProgress READ transformInProgress NOTIFY transformActivityChanged)
+    Q_PROPERTY(bool editMode READ editMode NOTIFY editModeChanged)
+    Q_PROPERTY(QString meshSelectionMode READ meshSelectionMode NOTIFY editModeChanged)
+    Q_PROPERTY(QStringList meshSelectionModes READ meshSelectionModes CONSTANT)
+    Q_PROPERTY(int selectedMeshElementCount READ selectedMeshElementCount NOTIFY editModeChanged)
     Q_PROPERTY(QString statusMessage READ statusMessage NOTIFY statusMessageChanged)
     Q_PROPERTY(QStringList recentProjects READ recentProjects NOTIFY recentProjectsChanged)
     Q_PROPERTY(bool recoveryAvailable READ recoveryAvailable NOTIFY recoveryAvailableChanged)
@@ -85,6 +89,13 @@ public:
     [[nodiscard]] QStringList collectionNames() const;
     [[nodiscard]] bool transformSnapEnabled() const noexcept { return transformSnapEnabled_; }
     [[nodiscard]] bool transformInProgress() const noexcept { return manipulator_.active(); }
+    [[nodiscard]] bool editMode() const noexcept { return session_.hasMeshEditTransaction(); }
+    [[nodiscard]] QString meshSelectionMode() const;
+    [[nodiscard]] QStringList meshSelectionModes() const;
+    [[nodiscard]] int selectedMeshElementCount() const;
+    [[nodiscard]] m3d::MeshEditPresentationSnapshot meshEditSnapshot() const {
+        return session_.meshEditPresentationSnapshot();
+    }
     [[nodiscard]] m3d::TransformTool transformToolValue() const noexcept { return transformTool_; }
     [[nodiscard]] m3d::TransformSpace transformSpaceValue() const noexcept { return transformSpace_; }
     [[nodiscard]] m3d::PivotMode pivotModeValue() const noexcept { return pivotMode_; }
@@ -141,6 +152,14 @@ public:
     Q_INVOKABLE bool toggleCollectionVisible(const QString& collectionName);
     Q_INVOKABLE bool toggleCollectionLocked(const QString& collectionName);
     Q_INVOKABLE void setTransformSnapEnabled(bool enabled);
+    Q_INVOKABLE bool toggleEditMode();
+    Q_INVOKABLE bool commitEditMode();
+    Q_INVOKABLE bool cancelEditMode();
+    Q_INVOKABLE bool setMeshSelectionMode(const QString& name);
+    Q_INVOKABLE bool selectMeshElement(const QString& type, int id, bool toggle = false);
+    Q_INVOKABLE bool extrudeSelectedFace(double distance = 0.25);
+    Q_INVOKABLE bool insetSelectedFace(double ratio = 0.25);
+    Q_INVOKABLE bool subdivideSelectedFace();
 
     // Viewport-only interaction boundary. Vulkan/Qt input supplies deltas, while
     // all scene mutation remains inside the EditorSession transaction system.
@@ -161,6 +180,7 @@ signals:
     void workspaceChanged();
     void transformSettingsChanged();
     void transformActivityChanged();
+    void editModeChanged();
     void layerChanged();
     void statusMessageChanged();
     void recentProjectsChanged();

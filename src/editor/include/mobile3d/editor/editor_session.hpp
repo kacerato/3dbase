@@ -7,6 +7,7 @@
 #include "mobile3d/core/project_repository.hpp"
 #include "mobile3d/core/selection_model.hpp"
 #include "mobile3d/editor/mesh_selection.hpp"
+#include "mobile3d/editor/mesh_edit_snapshot.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -80,6 +81,7 @@ public:
     [[nodiscard]] bool hasMeshEditTransaction() const noexcept { return meshEditTransaction_.has_value(); }
     [[nodiscard]] const EditableMesh* editableMesh() const noexcept;
     [[nodiscard]] const MeshSelectionModel* meshSelection() const noexcept;
+    [[nodiscard]] MeshEditPresentationSnapshot meshEditPresentationSnapshot() const;
     [[nodiscard]] bool setMeshSelectionMode(MeshSelectionMode mode) noexcept;
     [[nodiscard]] bool selectMeshVertex(EditableVertexId vertex,
                                         MeshSelectionAction action = MeshSelectionAction::Replace);

@@ -5,6 +5,7 @@ add_library(mobile3d_editor STATIC
     src/transform_gizmo.cpp
     src/transform_manipulator.cpp
     src/mesh_selection.cpp
+    src/mesh_edit_snapshot.cpp
 )
 
 add_library(Mobile3D::Editor ALIAS mobile3d_editor)

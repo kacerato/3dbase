@@ -54,6 +54,7 @@ Rectangle {
     // touch-friendly presentation of the same C++ state used by the viewport.
     Flow {
         id: transformToolbar
+        visible: !root.controller.editMode
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.margins: 10
@@ -121,6 +122,65 @@ Rectangle {
         }
     }
 
+    Flow {
+        id: modelingToolbar
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.margins: 10
+        width: Math.min(760, parent.width - 20)
+        spacing: 5
+        visible: root.controller.editMode || root.controller.workspace === "Modeling"
+
+        Button {
+            height: 38
+            text: root.controller.editMode ? "Object Mode" : "Edit Mode"
+            highlighted: root.controller.editMode
+            enabled: !root.controller.transformInProgress && root.controller.hasActiveObject
+            onClicked: root.controller.toggleEditMode()
+        }
+        Repeater {
+            model: root.controller.meshSelectionModes
+            delegate: Button {
+                required property string modelData
+                height: 38
+                visible: root.controller.editMode
+                text: modelData
+                highlighted: root.controller.meshSelectionMode === modelData
+                onClicked: root.controller.setMeshSelectionMode(modelData)
+            }
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
+            text: "Extrude"
+            enabled: root.controller.meshSelectionMode === "Face"
+                     && root.controller.selectedMeshElementCount === 1
+            onClicked: root.controller.extrudeSelectedFace(0.25)
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
+            text: "Inset"
+            enabled: root.controller.meshSelectionMode === "Face"
+                     && root.controller.selectedMeshElementCount === 1
+            onClicked: root.controller.insetSelectedFace(0.25)
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
+            text: "Subdivide"
+            enabled: root.controller.meshSelectionMode === "Face"
+                     && root.controller.selectedMeshElementCount === 1
+            onClicked: root.controller.subdivideSelectedFace()
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
+            text: "Cancel"
+            onClicked: root.controller.cancelEditMode()
+        }
+    }
+
     Row {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
@@ -157,6 +217,7 @@ Rectangle {
             text: nativeViewport.backendName
                   + (nativeViewport.vulkanActive ? " • native" : " • fallback")
                   + (root.controller.transformInProgress ? " • transforming" : "")
+                  + (root.controller.editMode ? " • Edit " + root.controller.meshSelectionMode : "")
             color: "#9aa3b1"
             font.pixelSize: 11
         }

@@ -173,6 +173,35 @@ QStringList EditorController::collectionNames() const {
     return values;
 }
 
+QString EditorController::meshSelectionMode() const {
+    const auto* selection = session_.meshSelection();
+    if (!selection) return QStringLiteral("Object");
+    switch (selection->mode()) {
+    case m3d::MeshSelectionMode::Vertex: return QStringLiteral("Vertex");
+    case m3d::MeshSelectionMode::Edge: return QStringLiteral("Edge");
+    case m3d::MeshSelectionMode::Face: return QStringLiteral("Face");
+    }
+    return QStringLiteral("Vertex");
+}
+
+QStringList EditorController::meshSelectionModes() const {
+    return {QStringLiteral("Vertex"), QStringLiteral("Edge"), QStringLiteral("Face")};
+}
+
+int EditorController::selectedMeshElementCount() const {
+    const auto* selection = session_.meshSelection();
+    if (!selection) return 0;
+    switch (selection->mode()) {
+    case m3d::MeshSelectionMode::Vertex:
+        return static_cast<int>(selection->selectedVertices().size());
+    case m3d::MeshSelectionMode::Edge:
+        return static_cast<int>(selection->selectedEdges().size());
+    case m3d::MeshSelectionMode::Face:
+        return static_cast<int>(selection->selectedFaces().size());
+    }
+    return 0;
+}
+
 m3d::TransformSnapSettings EditorController::transformSnapSettings() const noexcept {
     m3d::TransformSnapSettings settings;
     settings.translationEnabled = transformSnapEnabled_;
@@ -601,6 +630,115 @@ void EditorController::setTransformSnapEnabled(bool enabled) {
     emit transformSettingsChanged();
 }
 
+bool EditorController::toggleEditMode() {
+    if (manipulator_.active()) (void)cancelViewportTransform();
+    if (session_.hasMeshEditTransaction()) return commitEditMode();
+    const auto active = session_.selection().active();
+    if (!active) {
+        setStatus(QStringLiteral("Select a mesh object before entering Edit Mode."));
+        return false;
+    }
+    std::string error;
+    if (!session_.beginMeshEdit(*active, &error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    session_.setWorkspace(m3d::Workspace::Modeling);
+    setStatus(QStringLiteral("Edit Mode • Vertex selection"));
+    refreshUi();
+    emit workspaceChanged();
+    emit editModeChanged();
+    return true;
+}
+
+bool EditorController::commitEditMode() {
+    std::string error;
+    if (!session_.commitMeshEdit("Edit Mesh", &error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    setStatus(QStringLiteral("Mesh edit committed."));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
+bool EditorController::cancelEditMode() {
+    if (!session_.cancelMeshEdit()) return false;
+    setStatus(QStringLiteral("Mesh edit cancelled."));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
+bool EditorController::setMeshSelectionMode(const QString& name) {
+    if (!session_.hasMeshEditTransaction()) return false;
+    const QString value = name.trimmed().toLower();
+    std::optional<m3d::MeshSelectionMode> mode;
+    if (value == QStringLiteral("vertex")) mode = m3d::MeshSelectionMode::Vertex;
+    else if (value == QStringLiteral("edge")) mode = m3d::MeshSelectionMode::Edge;
+    else if (value == QStringLiteral("face")) mode = m3d::MeshSelectionMode::Face;
+    if (!mode || !session_.setMeshSelectionMode(*mode)) return false;
+    setStatus(QStringLiteral("Edit Mode • %1 selection").arg(name));
+    emit editModeChanged();
+    emit selectionChanged();
+    return true;
+}
+
+bool EditorController::selectMeshElement(const QString& type, int id, bool toggle) {
+    if (!session_.hasMeshEditTransaction() || id <= 0) return false;
+    const auto action = toggle ? m3d::MeshSelectionAction::Toggle : m3d::MeshSelectionAction::Replace;
+    const QString value = type.trimmed().toLower();
+    bool selected = false;
+    if (value == QStringLiteral("vertex")) {
+        selected = session_.selectMeshVertex(m3d::EditableVertexId{static_cast<std::uint32_t>(id)}, action);
+    } else if (value == QStringLiteral("edge")) {
+        selected = session_.selectMeshEdge(m3d::EditableEdgeId{static_cast<std::uint32_t>(id)}, action);
+    } else if (value == QStringLiteral("face")) {
+        selected = session_.selectMeshFace(m3d::EditableFaceId{static_cast<std::uint32_t>(id)}, action);
+    }
+    if (!selected) return false;
+    emit editModeChanged();
+    emit selectionChanged();
+    return true;
+}
+
+bool EditorController::extrudeSelectedFace(double distance) {
+    std::string error;
+    if (!session_.extrudeSelectedMeshFace(static_cast<float>(distance), &error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    setStatus(QStringLiteral("Face extruded."));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
+bool EditorController::insetSelectedFace(double ratio) {
+    std::string error;
+    if (!session_.insetSelectedMeshFace(static_cast<float>(ratio), &error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    setStatus(QStringLiteral("Face inset."));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
+bool EditorController::subdivideSelectedFace() {
+    std::string error;
+    if (!session_.subdivideSelectedMeshFace(&error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    setStatus(QStringLiteral("Face subdivided."));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
 bool EditorController::beginViewportTransform(m3d::TransformConstraint constraint) {
     bool started = false;
     const auto snapping = transformSnapSettings();
@@ -760,6 +898,7 @@ void EditorController::refreshUi() {
     emit projectStateChanged();
     emit historyChanged();
     emit selectionChanged();
+    emit editModeChanged();
 }
 
 void EditorController::refreshTransformPreview() {

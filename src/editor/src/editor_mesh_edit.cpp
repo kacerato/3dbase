@@ -50,6 +50,15 @@ const MeshSelectionModel* EditorSession::meshSelection() const noexcept {
     return meshEditTransaction_ ? &meshEditTransaction_->selection : nullptr;
 }
 
+MeshEditPresentationSnapshot EditorSession::meshEditPresentationSnapshot() const {
+    if (!meshEditTransaction_) return {};
+    return MeshEditSnapshotBuilder::build(meshEditTransaction_->working,
+                                          meshEditTransaction_->selection,
+                                          meshEditTransaction_->object,
+                                          meshEditTransaction_->resource,
+                                          selectionRevision_);
+}
+
 bool EditorSession::setMeshSelectionMode(MeshSelectionMode mode) noexcept {
     if (!meshEditTransaction_) return false;
     if (meshEditTransaction_->selection.mode() == mode) return true;
