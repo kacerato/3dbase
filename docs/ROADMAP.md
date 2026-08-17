@@ -141,11 +141,11 @@ At this point the first APK may become useful enough for internal testing, but p
 - [ ] Knife.
 - [x] Merge/Weld.
 - [x] Subdivide.
-- [ ] Fill/Grid Fill.
+- [x] Fill/Grid Fill.
 - [x] Bridge loops.
 - [x] Normals tools.
 
-Current modeling baselines: Loop Cut propagates across complete quad rings with 1–32 evenly spaced cuts; Edge Slide remains a separate follow-up operator. Single closed-loop Fill is implemented; Bridge supports two disjoint closed loops with equal or unequal vertex counts, using cyclic minimum-distance alignment and a validated quad/triangle zipper strip. Grid Fill remains pending. Vertex/Edge/Face delete is topology-aware. Normal orientation tools provide connected-component Flip and closed-component Recalculate Outside; smooth/split/custom shading normals remain in the shading/material stage.
+Current modeling baselines: Loop Cut propagates across complete quad rings with 1–32 evenly spaced cuts; Edge Slide remains a separate follow-up operator. Single-loop Fill and structured Grid Fill are implemented. Grid Fill uses explicit Span/Offset and a Coons-style interior patch to create quads while preserving the selected boundary. Bridge supports two disjoint closed loops with equal or unequal vertex counts, using cyclic minimum-distance alignment and a validated quad/triangle zipper strip. Vertex/Edge/Face delete is topology-aware. Normal orientation tools provide connected-component Flip and closed-component Recalculate Outside; smooth/split/custom shading normals remain in the shading/material stage.
 
 Exit criterion: useful polygon modeling can be completed entirely on mobile.
 

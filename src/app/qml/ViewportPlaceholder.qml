@@ -215,6 +215,35 @@ Rectangle {
                      && root.controller.selectedMeshElementCount >= 3
             onClicked: root.controller.fillSelectedBoundary()
         }
+        SpinBox {
+            id: gridFillSpan
+            height: 38
+            width: 78
+            visible: root.controller.editMode && root.controller.meshSelectionMode === "Edge"
+            from: 1
+            to: Math.max(1, Math.floor(root.controller.selectedMeshElementCount / 2) - 1)
+            value: Math.min(2, to)
+            editable: false
+        }
+        SpinBox {
+            id: gridFillOffset
+            height: 38
+            width: 78
+            visible: root.controller.editMode && root.controller.meshSelectionMode === "Edge"
+            from: 0
+            to: Math.max(0, root.controller.selectedMeshElementCount - 1)
+            value: 0
+            editable: false
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
+            text: "Grid Fill"
+            enabled: root.controller.meshSelectionMode === "Edge"
+                     && root.controller.selectedMeshElementCount >= 4
+                     && root.controller.selectedMeshElementCount % 2 === 0
+            onClicked: root.controller.gridFillSelectedBoundary(gridFillSpan.value, gridFillOffset.value)
+        }
         Button {
             height: 38
             visible: root.controller.editMode

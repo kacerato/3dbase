@@ -97,6 +97,8 @@ public:
     [[nodiscard]] bool mergeSelectedMeshVertices(std::string* error = nullptr);
     [[nodiscard]] bool weldSelectedMeshVertices(float distance, std::string* error = nullptr);
     [[nodiscard]] bool fillSelectedMeshBoundary(std::string* error = nullptr);
+    [[nodiscard]] bool gridFillSelectedMeshBoundary(std::uint32_t span, std::uint32_t offset,
+                                                    std::string* error = nullptr);
     [[nodiscard]] bool bridgeSelectedMeshBoundaries(std::string* error = nullptr);
     [[nodiscard]] bool loopCutSelectedMeshEdge(std::string* error = nullptr);
     [[nodiscard]] bool loopCutSelectedMeshEdge(std::uint32_t cuts,

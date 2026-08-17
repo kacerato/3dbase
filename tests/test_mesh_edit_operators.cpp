@@ -565,3 +565,70 @@ TEST_CASE("edit mode bridge adapts triangle and quad boundary loops in one trans
     REQUIRE(session.redo());
     REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->faceCount() == 8U);
 }
+
+TEST_CASE("edit mode grid fill builds a structured quad patch and remains one undo") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Grid Fill Operator", &error));
+
+    m3d::EditableMesh authored;
+    const std::array<m3d::Vec3,10> ringPositions{
+        m3d::Vec3{-1.5F,-1.0F,1.0F}, m3d::Vec3{-0.5F,-1.0F,1.0F},
+        m3d::Vec3{0.5F,-1.0F,1.0F}, m3d::Vec3{1.5F,-1.0F,1.0F},
+        m3d::Vec3{1.5F,0.0F,1.0F}, m3d::Vec3{1.5F,1.0F,1.0F},
+        m3d::Vec3{0.5F,1.0F,1.0F}, m3d::Vec3{-0.5F,1.0F,1.0F},
+        m3d::Vec3{-1.5F,1.0F,1.0F}, m3d::Vec3{-1.5F,0.0F,1.0F}
+    };
+    std::array<m3d::EditableVertexId,10> top{};
+    std::array<m3d::EditableVertexId,10> bottom{};
+    for (std::size_t index=0; index<ringPositions.size(); ++index) {
+        top[index]=authored.addVertex(ringPositions[index]);
+        auto position=ringPositions[index]; position.z=-1.0F;
+        bottom[index]=authored.addVertex(position);
+    }
+    REQUIRE(authored.addFace(bottom,&error).has_value());
+    for (std::size_t index=0; index<top.size(); ++index) {
+        const std::size_t next=(index+1U)%top.size();
+        const std::array<m3d::EditableVertexId,4> side{top[index],top[next],bottom[next],bottom[index]};
+        REQUIRE(authored.addFace(side,&error).has_value());
+    }
+    m3d::MeshResource resource;
+    resource.id=m3d::ResourceId::generate();
+    resource.name="Grid Fill Open Prism";
+    resource.authoring=authored;
+    REQUIRE(resource.rebuildFromAuthoring(&error));
+    const auto object=session.createMeshObject(std::move(resource),"Grid Fill Open Prism");
+    REQUIRE(object.has_value());
+    REQUIRE(session.saveProject(&error));
+    REQUIRE(session.beginMeshEdit(*object,&error));
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Edge));
+
+    bool first=true;
+    std::size_t boundaryCount=0U;
+    for (const auto& edge:session.editableMesh()->edges()) {
+        const auto* halfEdge=session.editableMesh()->findHalfEdge(edge.halfEdge);
+        if (!halfEdge || !halfEdge->twin.isNull()) continue;
+        REQUIRE(session.selectMeshEdge(edge.id, first ? m3d::MeshSelectionAction::Replace
+                                                      : m3d::MeshSelectionAction::Add));
+        first=false; ++boundaryCount;
+    }
+    REQUIRE(boundaryCount==10U);
+    REQUIRE(session.gridFillSelectedMeshBoundary(3U,0U,&error));
+    REQUIRE(error.empty());
+    REQUIRE(session.editableMesh()->vertexCount()==22U);
+    REQUIRE(session.editableMesh()->faceCount()==17U);
+    REQUIRE(session.meshSelection()->mode()==m3d::MeshSelectionMode::Face);
+    REQUIRE(session.meshSelection()->selectedFaces().size()==6U);
+
+    REQUIRE(session.commitMeshEdit("Grid Fill",&error));
+    REQUIRE(session.nextUndoName()=="Grid Fill");
+    REQUIRE(session.undo());
+    const auto resourceId=*session.scene()->find(*object)->meshResource;
+    REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->vertexCount()==20U);
+    REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->faceCount()==11U);
+    REQUIRE(session.redo());
+    REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->vertexCount()==22U);
+    REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->faceCount()==17U);
+}

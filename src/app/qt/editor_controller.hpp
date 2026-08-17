@@ -164,6 +164,7 @@ public:
     Q_INVOKABLE bool mergeSelectedVertices();
     Q_INVOKABLE bool weldSelectedVertices(double distance = 0.01);
     Q_INVOKABLE bool fillSelectedBoundary();
+    Q_INVOKABLE bool gridFillSelectedBoundary(int span, int offset = 0);
     Q_INVOKABLE bool bridgeSelectedBoundaries();
     Q_INVOKABLE bool loopCutSelectedEdge(int cuts = 1);
     Q_INVOKABLE bool deleteSelectedMeshElements();

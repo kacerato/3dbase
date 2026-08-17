@@ -367,4 +367,40 @@ bool EditorSession::recalculateMeshNormalsOutside(std::string* error) {
     return applyMeshEditPreview(candidate, error);
 }
 
+
+bool EditorSession::gridFillSelectedMeshBoundary(std::uint32_t span, std::uint32_t offset,
+                                                  std::string* error) {
+    if (!meshEditTransaction_) {
+        if (error) *error = "Edit Mode is not active";
+        return false;
+    }
+    auto& selection = meshEditTransaction_->selection;
+    if (selection.mode() != MeshSelectionMode::Edge) {
+        if (error) *error = "Grid Fill requires Edge selection mode";
+        return false;
+    }
+    const auto selected = selection.selectedEdges();
+    if (selected.size() < 4U) {
+        if (error) *error = "Grid Fill requires a closed boundary loop with at least four selected edges";
+        return false;
+    }
+
+    EditableMesh candidate = meshEditTransaction_->working;
+    const auto faces = candidate.gridFillBoundaryLoop(selected, span, offset, error);
+    if (!faces || faces->empty() || !applyMeshEditPreview(candidate, error)) return false;
+
+    selection.clear();
+    selection.setMode(MeshSelectionMode::Face);
+    bool first = true;
+    for (const auto face : *faces) {
+        (void)selection.select(meshEditTransaction_->working, face,
+                               first ? MeshSelectionAction::Replace : MeshSelectionAction::Add);
+        first = false;
+    }
+    ++selectionRevision_;
+    ++uiRevision_;
+    if (error) error->clear();
+    return true;
+}
+
 } // namespace m3d

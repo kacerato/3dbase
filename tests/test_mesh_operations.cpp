@@ -575,3 +575,72 @@ TEST_CASE("adaptive bridge retains quad band for equal loop counts") {
     for(const auto faceId:*bridge) REQUIRE(mesh.faceVertices(faceId).size()==4U);
     REQUIRE(mesh.validate(&error));
 }
+
+TEST_CASE("grid fill creates a structured quad patch across a segmented rectangular boundary") {
+    m3d::EditableMesh mesh;
+    const std::array<m3d::Vec3,10> ringPositions{
+        m3d::Vec3{-1.5F,-1.0F,1.0F}, m3d::Vec3{-0.5F,-1.0F,1.0F},
+        m3d::Vec3{0.5F,-1.0F,1.0F}, m3d::Vec3{1.5F,-1.0F,1.0F},
+        m3d::Vec3{1.5F,0.0F,1.0F}, m3d::Vec3{1.5F,1.0F,1.0F},
+        m3d::Vec3{0.5F,1.0F,1.0F}, m3d::Vec3{-0.5F,1.0F,1.0F},
+        m3d::Vec3{-1.5F,1.0F,1.0F}, m3d::Vec3{-1.5F,0.0F,1.0F}
+    };
+    std::array<m3d::EditableVertexId,10> top{};
+    std::array<m3d::EditableVertexId,10> bottom{};
+    for (std::size_t index=0; index<ringPositions.size(); ++index) {
+        top[index] = mesh.addVertex(ringPositions[index]);
+        auto position = ringPositions[index];
+        position.z = -1.0F;
+        bottom[index] = mesh.addVertex(position);
+    }
+    std::string error;
+    REQUIRE(mesh.addFace(bottom,&error).has_value());
+    for (std::size_t index=0; index<top.size(); ++index) {
+        const std::size_t next=(index+1U)%top.size();
+        const std::array<m3d::EditableVertexId,4> side{top[index],top[next],bottom[next],bottom[index]};
+        REQUIRE(mesh.addFace(side,&error).has_value());
+    }
+    REQUIRE(mesh.validate(&error));
+    REQUIRE(mesh.vertexCount()==20U);
+    REQUIRE(mesh.edgeCount()==30U);
+    REQUIRE(mesh.faceCount()==11U);
+
+    std::vector<m3d::EditableEdgeId> boundary;
+    for (const auto& edge:mesh.edges()) {
+        const auto* halfEdge=mesh.findHalfEdge(edge.halfEdge);
+        if (halfEdge && halfEdge->twin.isNull()) boundary.push_back(edge.id);
+    }
+    REQUIRE(boundary.size()==10U);
+    const auto filled=mesh.gridFillBoundaryLoop(boundary,3U,0U,&error);
+    REQUIRE(filled.has_value());
+    REQUIRE(filled->size()==6U);
+    REQUIRE(error.empty());
+    REQUIRE(mesh.validate(&error));
+    REQUIRE(mesh.vertexCount()==22U);
+    REQUIRE(mesh.edgeCount()==37U);
+    REQUIRE(mesh.halfEdgeCount()==74U);
+    REQUIRE(mesh.faceCount()==17U);
+    for (const auto& edge:mesh.edges()) {
+        const auto* halfEdge=mesh.findHalfEdge(edge.halfEdge);
+        REQUIRE(halfEdge != nullptr);
+        REQUIRE(!halfEdge->twin.isNull());
+    }
+}
+
+TEST_CASE("grid fill span and offset validation is atomic") {
+    auto mesh=m3d::EditableMesh::makeCube();
+    std::string error;
+    REQUIRE(mesh.deleteFaces(std::array<m3d::EditableFaceId,1>{mesh.faces().front().id},&error));
+    std::vector<m3d::EditableEdgeId> boundary;
+    for(const auto& edge:mesh.edges()) {
+        const auto* halfEdge=mesh.findHalfEdge(edge.halfEdge);
+        if(halfEdge && halfEdge->twin.isNull()) boundary.push_back(edge.id);
+    }
+    const auto before=mesh.snapshot();
+    REQUIRE(!mesh.gridFillBoundaryLoop(boundary,0U,0U,&error).has_value());
+    REQUIRE(!mesh.gridFillBoundaryLoop(boundary,2U,0U,&error).has_value());
+    REQUIRE(mesh.snapshot().vertices==before.vertices);
+    REQUIRE(mesh.snapshot().halfEdges==before.halfEdges);
+    REQUIRE(mesh.snapshot().edges==before.edges);
+    REQUIRE(mesh.snapshot().faces==before.faces);
+}

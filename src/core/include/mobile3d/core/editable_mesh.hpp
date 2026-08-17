@@ -114,6 +114,9 @@ public:
         std::string* error = nullptr);
     [[nodiscard]] std::optional<EditableFaceId> fillBoundaryLoop(
         std::span<const EditableEdgeId> edges, std::string* error = nullptr);
+    [[nodiscard]] std::optional<std::vector<EditableFaceId>> gridFillBoundaryLoop(
+        std::span<const EditableEdgeId> edges, std::uint32_t span, std::uint32_t offset = 0U,
+        std::string* error = nullptr);
     [[nodiscard]] std::optional<std::vector<EditableFaceId>> bridgeBoundaryLoops(
         std::span<const EditableEdgeId> edges, std::string* error = nullptr);
     [[nodiscard]] std::optional<std::vector<EditableFaceId>> bridgeBoundaryLoopsAdaptive(

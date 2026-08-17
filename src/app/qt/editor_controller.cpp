@@ -782,6 +782,23 @@ bool EditorController::fillSelectedBoundary() {
     return true;
 }
 
+bool EditorController::gridFillSelectedBoundary(int span, int offset) {
+    if (span < 1 || offset < 0) {
+        setStatus(QStringLiteral("Grid Fill span must be positive and offset cannot be negative."));
+        return false;
+    }
+    std::string error;
+    if (!session_.gridFillSelectedMeshBoundary(static_cast<std::uint32_t>(span),
+                                               static_cast<std::uint32_t>(offset), &error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    setStatus(QStringLiteral("Boundary grid-filled with span %1 and offset %2.").arg(span).arg(offset));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
 bool EditorController::bridgeSelectedBoundaries() {
     std::string error;
     if (!session_.bridgeSelectedMeshBoundaries(&error)) {
