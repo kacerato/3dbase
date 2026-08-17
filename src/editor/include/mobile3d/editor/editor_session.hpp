@@ -96,6 +96,8 @@ public:
     [[nodiscard]] bool subdivideSelectedMeshFace(std::string* error = nullptr);
     [[nodiscard]] bool mergeSelectedMeshVertices(std::string* error = nullptr);
     [[nodiscard]] bool weldSelectedMeshVertices(float distance, std::string* error = nullptr);
+    [[nodiscard]] bool fillSelectedMeshBoundary(std::string* error = nullptr);
+    [[nodiscard]] bool bridgeSelectedMeshBoundaries(std::string* error = nullptr);
 
     [[nodiscard]] bool select(ObjectId object,
                               SelectionMode mode = SelectionMode::Replace);

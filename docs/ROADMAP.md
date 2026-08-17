@@ -145,6 +145,8 @@ At this point the first APK may become useful enough for internal testing, but p
 - [ ] Bridge loops.
 - [ ] Normals tools.
 
+Current boundary-tool baseline: single closed-loop Fill is implemented; Bridge supports two disjoint closed loops with equal vertex counts and automatic minimum-distance alignment. Grid Fill and unequal-count bridge policies remain pending before those checklist items are considered complete.
+
 Exit criterion: useful polygon modeling can be completed entirely on mobile.
 
 ## Stage 6 — Primitive and modifier system

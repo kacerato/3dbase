@@ -106,6 +106,10 @@ public:
         std::span<const EditableVertexId> vertices, float distance,
         std::optional<EditableVertexId> preferredTarget = std::nullopt,
         std::string* error = nullptr);
+    [[nodiscard]] std::optional<EditableFaceId> fillBoundaryLoop(
+        std::span<const EditableEdgeId> edges, std::string* error = nullptr);
+    [[nodiscard]] std::optional<std::vector<EditableFaceId>> bridgeBoundaryLoops(
+        std::span<const EditableEdgeId> edges, std::string* error = nullptr);
 
     [[nodiscard]] std::size_t vertexCount() const noexcept { return vertexCount_; }
     [[nodiscard]] std::size_t halfEdgeCount() const noexcept { return halfEdgeCount_; }

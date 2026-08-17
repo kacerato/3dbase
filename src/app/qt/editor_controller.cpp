@@ -770,6 +770,30 @@ bool EditorController::weldSelectedVertices(double distance) {
     return true;
 }
 
+bool EditorController::fillSelectedBoundary() {
+    std::string error;
+    if (!session_.fillSelectedMeshBoundary(&error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    setStatus(QStringLiteral("Boundary loop filled."));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
+bool EditorController::bridgeSelectedBoundaries() {
+    std::string error;
+    if (!session_.bridgeSelectedMeshBoundaries(&error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    setStatus(QStringLiteral("Boundary loops bridged."));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
 bool EditorController::beginViewportTransform(m3d::TransformConstraint constraint) {
     bool started = false;
     const auto snapping = transformSnapSettings();

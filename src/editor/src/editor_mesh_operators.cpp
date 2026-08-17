@@ -149,4 +149,68 @@ bool EditorSession::weldSelectedMeshVertices(float distance, std::string* error)
     return true;
 }
 
+
+bool EditorSession::fillSelectedMeshBoundary(std::string* error) {
+    if (!meshEditTransaction_) {
+        if (error) *error = "Edit Mode is not active";
+        return false;
+    }
+    auto& selection = meshEditTransaction_->selection;
+    if (selection.mode() != MeshSelectionMode::Edge) {
+        if (error) *error = "Fill requires Edge selection mode";
+        return false;
+    }
+    const auto selected = selection.selectedEdges();
+    if (selected.size() < 3U) {
+        if (error) *error = "Fill requires a closed boundary loop with at least three selected edges";
+        return false;
+    }
+
+    EditableMesh candidate = meshEditTransaction_->working;
+    const auto face = candidate.fillBoundaryLoop(selected, error);
+    if (!face || !applyMeshEditPreview(candidate, error)) return false;
+
+    selection.clear();
+    selection.setMode(MeshSelectionMode::Face);
+    (void)selection.select(meshEditTransaction_->working, *face, MeshSelectionAction::Replace);
+    ++selectionRevision_;
+    ++uiRevision_;
+    if (error) error->clear();
+    return true;
+}
+
+bool EditorSession::bridgeSelectedMeshBoundaries(std::string* error) {
+    if (!meshEditTransaction_) {
+        if (error) *error = "Edit Mode is not active";
+        return false;
+    }
+    auto& selection = meshEditTransaction_->selection;
+    if (selection.mode() != MeshSelectionMode::Edge) {
+        if (error) *error = "Bridge requires Edge selection mode";
+        return false;
+    }
+    const auto selected = selection.selectedEdges();
+    if (selected.size() < 6U) {
+        if (error) *error = "Bridge requires two closed boundary loops";
+        return false;
+    }
+
+    EditableMesh candidate = meshEditTransaction_->working;
+    const auto faces = candidate.bridgeBoundaryLoops(selected, error);
+    if (!faces || faces->empty() || !applyMeshEditPreview(candidate, error)) return false;
+
+    selection.clear();
+    selection.setMode(MeshSelectionMode::Face);
+    bool first = true;
+    for (const auto face : *faces) {
+        (void)selection.select(meshEditTransaction_->working, face,
+                               first ? MeshSelectionAction::Replace : MeshSelectionAction::Add);
+        first = false;
+    }
+    ++selectionRevision_;
+    ++uiRevision_;
+    if (error) error->clear();
+    return true;
+}
+
 } // namespace m3d

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <set>
 #include <utility>
@@ -41,6 +42,90 @@ namespace {
     value.y += direction.y * scale;
     value.z += direction.z * scale;
     return value;
+}
+
+struct BoundaryArc final {
+    EditableEdgeId edge{};
+    EditableVertexId destination{};
+};
+
+[[nodiscard]] std::optional<std::vector<std::vector<EditableVertexId>>> selectedBoundaryLoops(
+    const EditableMesh& mesh, std::span<const EditableEdgeId> selectedEdges,
+    std::string* error) {
+    std::set<EditableEdgeId> unique(selectedEdges.begin(), selectedEdges.end());
+    if (unique.size() < 3U) {
+        if (error) *error = "Boundary operation requires at least three unique edges";
+        return std::nullopt;
+    }
+
+    std::map<EditableVertexId, BoundaryArc> outgoing;
+    std::set<EditableVertexId> incoming;
+    for (const auto edgeId : unique) {
+        const auto* edge = mesh.findEdge(edgeId);
+        const auto* halfEdge = edge ? mesh.findHalfEdge(edge->halfEdge) : nullptr;
+        const auto* next = halfEdge ? mesh.findHalfEdge(halfEdge->next) : nullptr;
+        if (!edge || !halfEdge || !next) {
+            if (error) *error = "Selected boundary edge is invalid";
+            return std::nullopt;
+        }
+        if (!halfEdge->twin.isNull()) {
+            if (error) *error = "Selected edge is not on an open boundary";
+            return std::nullopt;
+        }
+        const auto origin = halfEdge->origin;
+        const auto destination = next->origin;
+        if (origin.isNull() || destination.isNull() || origin == destination ||
+            outgoing.contains(origin) || incoming.contains(destination)) {
+            if (error) *error = "Selected boundary edges branch or repeat a vertex";
+            return std::nullopt;
+        }
+        outgoing.emplace(origin, BoundaryArc{edgeId, destination});
+        incoming.insert(destination);
+    }
+
+    std::set<EditableEdgeId> visited;
+    std::vector<std::vector<EditableVertexId>> loops;
+    for (const auto& [origin, arc] : outgoing) {
+        if (visited.contains(arc.edge)) continue;
+        std::vector<EditableVertexId> loop;
+        const EditableVertexId start = origin;
+        EditableVertexId current = start;
+        bool closed = false;
+        for (std::size_t step = 0; step <= unique.size(); ++step) {
+            const auto found = outgoing.find(current);
+            if (found == outgoing.end()) break;
+            if (visited.contains(found->second.edge)) {
+                closed = current == start;
+                break;
+            }
+            loop.push_back(current);
+            visited.insert(found->second.edge);
+            current = found->second.destination;
+            if (current == start) {
+                closed = true;
+                break;
+            }
+        }
+        if (!closed || loop.size() < 3U) {
+            if (error) *error = "Selected boundary edges do not form closed loops";
+            return std::nullopt;
+        }
+        loops.push_back(std::move(loop));
+    }
+
+    if (visited.size() != unique.size()) {
+        if (error) *error = "Selected boundary traversal did not consume every edge";
+        return std::nullopt;
+    }
+    if (error) error->clear();
+    return loops;
+}
+
+[[nodiscard]] float squaredDistance(Vec3 left, Vec3 right) noexcept {
+    const float x = left.x - right.x;
+    const float y = left.y - right.y;
+    const float z = left.z - right.z;
+    return x * x + y * y + z * z;
 }
 
 } // namespace
@@ -462,6 +547,111 @@ std::optional<EditableVertexWeldResult> EditableMesh::weldVertices(
     }
     if (error) error->clear();
     return result;
+}
+
+
+std::optional<EditableFaceId> EditableMesh::fillBoundaryLoop(
+    std::span<const EditableEdgeId> edges, std::string* error) {
+    const auto loops = selectedBoundaryLoops(*this, edges, error);
+    if (!loops) return std::nullopt;
+    if (loops->size() != 1U) {
+        if (error) *error = "Fill requires exactly one closed boundary loop";
+        return std::nullopt;
+    }
+
+    EditableMesh working = *this;
+    std::vector<EditableVertexId> faceVertices = loops->front();
+    std::reverse(faceVertices.begin(), faceVertices.end());
+    const auto face = working.addFace(faceVertices, error);
+    if (!face || !working.validate(error)) return std::nullopt;
+
+    *this = std::move(working);
+    if (error) error->clear();
+    return face;
+}
+
+std::optional<std::vector<EditableFaceId>> EditableMesh::bridgeBoundaryLoops(
+    std::span<const EditableEdgeId> edges, std::string* error) {
+    const auto loops = selectedBoundaryLoops(*this, edges, error);
+    if (!loops) return std::nullopt;
+    if (loops->size() != 2U) {
+        if (error) *error = "Bridge currently requires exactly two closed boundary loops";
+        return std::nullopt;
+    }
+    const auto& first = (*loops)[0];
+    const auto& second = (*loops)[1];
+    if (first.size() != second.size()) {
+        if (error) *error = "Bridge currently requires boundary loops with the same vertex count";
+        return std::nullopt;
+    }
+    if (first.size() < 3U) {
+        if (error) *error = "Bridge loops must contain at least three vertices";
+        return std::nullopt;
+    }
+
+    std::set<EditableVertexId> firstVertices(first.begin(), first.end());
+    for (const auto vertex : second) {
+        if (firstVertices.contains(vertex)) {
+            if (error) *error = "Bridge boundary loops must be vertex-disjoint";
+            return std::nullopt;
+        }
+    }
+
+    std::vector<Vec3> firstPositions;
+    std::vector<Vec3> secondPositions;
+    firstPositions.reserve(first.size());
+    secondPositions.reserve(second.size());
+    for (const auto vertex : first) {
+        const auto* value = findVertex(vertex);
+        if (!value) {
+            if (error) *error = "Bridge loop contains a missing vertex";
+            return std::nullopt;
+        }
+        firstPositions.push_back(value->position);
+    }
+    for (const auto vertex : second) {
+        const auto* value = findVertex(vertex);
+        if (!value) {
+            if (error) *error = "Bridge loop contains a missing vertex";
+            return std::nullopt;
+        }
+        secondPositions.push_back(value->position);
+    }
+
+    const std::size_t count = first.size();
+    std::size_t bestOffset = 0U;
+    float bestCost = std::numeric_limits<float>::infinity();
+    for (std::size_t offset = 0; offset < count; ++offset) {
+        float cost = 0.0F;
+        for (std::size_t index = 0; index < count; ++index) {
+            const std::size_t secondIndex = (offset + count - index) % count;
+            cost += squaredDistance(firstPositions[index], secondPositions[secondIndex]);
+        }
+        if (cost < bestCost) {
+            bestCost = cost;
+            bestOffset = offset;
+        }
+    }
+
+    EditableMesh working = *this;
+    std::vector<EditableFaceId> created;
+    created.reserve(count);
+    for (std::size_t index = 0; index < count; ++index) {
+        const std::size_t nextIndex = (index + 1U) % count;
+        const std::size_t secondIndex = (bestOffset + count - index) % count;
+        const std::size_t secondNext = (bestOffset + count - nextIndex) % count;
+        const std::array<EditableVertexId, 4> quad{
+            first[index], second[secondIndex], second[secondNext], first[nextIndex]
+        };
+        const auto face = working.addFace(quad, error);
+        if (!face) return std::nullopt;
+        created.push_back(*face);
+    }
+    if (!working.validate(error)) return std::nullopt;
+
+    *this = std::move(working);
+    if (error) error->clear();
+    return created;
 }
 
 } // namespace m3d

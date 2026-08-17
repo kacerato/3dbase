@@ -202,3 +202,92 @@ TEST_CASE("invalid merge target leaves topology unchanged") {
     REQUIRE(mesh.snapshot().edges == before.edges);
     REQUIRE(mesh.snapshot().faces == before.faces);
 }
+
+TEST_CASE("fill boundary loop closes a removed cube face and reuses boundary edge ids") {
+    auto mesh = m3d::EditableMesh::makeCube(1.0F);
+    const auto removed = mesh.faces().front().id;
+    const auto removedVertices = mesh.faceVertices(removed);
+    std::string error;
+    REQUIRE(mesh.removeFace(removed, &error));
+    REQUIRE(mesh.faceCount() == 5U);
+
+    std::vector<m3d::EditableEdgeId> boundary;
+    for (const auto& edge : mesh.edges()) {
+        const auto* halfEdge = mesh.findHalfEdge(edge.halfEdge);
+        if (halfEdge && halfEdge->twin.isNull()) boundary.push_back(edge.id);
+    }
+    REQUIRE(boundary.size() == 4U);
+    const auto boundaryIds = boundary;
+    const auto filled = mesh.fillBoundaryLoop(boundary, &error);
+    REQUIRE(filled.has_value());
+    REQUIRE(error.empty());
+    REQUIRE(mesh.validate(&error));
+    REQUIRE(mesh.vertexCount() == 8U);
+    REQUIRE(mesh.edgeCount() == 12U);
+    REQUIRE(mesh.halfEdgeCount() == 24U);
+    REQUIRE(mesh.faceCount() == 6U);
+    REQUIRE(mesh.faceVertices(*filled).size() == removedVertices.size());
+    for (const auto edgeId : boundaryIds) {
+        const auto* edge = mesh.findEdge(edgeId);
+        const auto* halfEdge = edge ? mesh.findHalfEdge(edge->halfEdge) : nullptr;
+        REQUIRE(edge != nullptr);
+        REQUIRE(halfEdge != nullptr);
+        REQUIRE(!halfEdge->twin.isNull());
+    }
+}
+
+TEST_CASE("bridge equal boundary loops creates a closed quad band") {
+    m3d::EditableMesh mesh;
+    const std::array<m3d::EditableVertexId, 4> bottom{
+        mesh.addVertex({-1.0F, -1.0F, 0.0F}), mesh.addVertex({1.0F, -1.0F, 0.0F}),
+        mesh.addVertex({1.0F, 1.0F, 0.0F}), mesh.addVertex({-1.0F, 1.0F, 0.0F})
+    };
+    const std::array<m3d::EditableVertexId, 4> top{
+        mesh.addVertex({-1.0F, -1.0F, 2.0F}), mesh.addVertex({1.0F, -1.0F, 2.0F}),
+        mesh.addVertex({1.0F, 1.0F, 2.0F}), mesh.addVertex({-1.0F, 1.0F, 2.0F})
+    };
+    const std::array<m3d::EditableVertexId, 4> bottomWinding{bottom[0], bottom[3], bottom[2], bottom[1]};
+    const std::array<m3d::EditableVertexId, 4> topWinding{top[0], top[1], top[2], top[3]};
+    std::string error;
+    REQUIRE(mesh.addFace(bottomWinding, &error).has_value());
+    REQUIRE(mesh.addFace(topWinding, &error).has_value());
+    REQUIRE(mesh.validate(&error));
+
+    std::vector<m3d::EditableEdgeId> boundaries;
+    for (const auto& edge : mesh.edges()) boundaries.push_back(edge.id);
+    REQUIRE(boundaries.size() == 8U);
+    const auto bridge = mesh.bridgeBoundaryLoops(boundaries, &error);
+    REQUIRE(bridge.has_value());
+    REQUIRE(bridge->size() == 4U);
+    REQUIRE(error.empty());
+    REQUIRE(mesh.validate(&error));
+    REQUIRE(mesh.vertexCount() == 8U);
+    REQUIRE(mesh.edgeCount() == 12U);
+    REQUIRE(mesh.halfEdgeCount() == 24U);
+    REQUIRE(mesh.faceCount() == 6U);
+    for (const auto& edge : mesh.edges()) {
+        const auto* halfEdge = mesh.findHalfEdge(edge.halfEdge);
+        REQUIRE(halfEdge != nullptr);
+        REQUIRE(!halfEdge->twin.isNull());
+    }
+}
+
+TEST_CASE("fill rejects an incomplete boundary selection atomically") {
+    auto mesh = m3d::EditableMesh::makeCube();
+    std::string error;
+    REQUIRE(mesh.removeFace(mesh.faces().front().id, &error));
+    std::vector<m3d::EditableEdgeId> boundary;
+    for (const auto& edge : mesh.edges()) {
+        const auto* halfEdge = mesh.findHalfEdge(edge.halfEdge);
+        if (halfEdge && halfEdge->twin.isNull()) boundary.push_back(edge.id);
+    }
+    REQUIRE(boundary.size() == 4U);
+    boundary.pop_back();
+    const auto before = mesh.snapshot();
+    REQUIRE(!mesh.fillBoundaryLoop(boundary, &error).has_value());
+    REQUIRE(!error.empty());
+    REQUIRE(mesh.snapshot().vertices == before.vertices);
+    REQUIRE(mesh.snapshot().halfEdges == before.halfEdges);
+    REQUIRE(mesh.snapshot().edges == before.edges);
+    REQUIRE(mesh.snapshot().faces == before.faces);
+}

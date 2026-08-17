@@ -2,6 +2,7 @@
 
 #include "mobile3d/editor/editor_session.hpp"
 
+#include <array>
 #include <filesystem>
 #include <string>
 
@@ -191,4 +192,97 @@ TEST_CASE("edit mode weld with no matching distance is a clean no-op") {
     REQUIRE(session.editableMesh()->vertexCount() == 8U);
     REQUIRE(!session.isDirty());
     REQUIRE(session.cancelMeshEdit());
+}
+
+TEST_CASE("edit mode fill closes a selected boundary loop and commits through undo") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Fill Operator", &error));
+
+    m3d::MeshResource resource = m3d::MeshResource::makeCube("Open Cube", 1.0F);
+    REQUIRE(resource.authoring.has_value());
+    REQUIRE(resource.authoring->removeFace(resource.authoring->faces().front().id, &error));
+    REQUIRE(resource.rebuildFromAuthoring(&error));
+    const auto object = session.createMeshObject(std::move(resource), "Open Cube");
+    REQUIRE(object.has_value());
+    REQUIRE(session.saveProject(&error));
+    REQUIRE(session.beginMeshEdit(*object, &error));
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Edge));
+
+    bool first = true;
+    std::size_t boundaryCount = 0U;
+    for (const auto& edge : session.editableMesh()->edges()) {
+        const auto* halfEdge = session.editableMesh()->findHalfEdge(edge.halfEdge);
+        if (!halfEdge || !halfEdge->twin.isNull()) continue;
+        REQUIRE(session.selectMeshEdge(edge.id, first ? m3d::MeshSelectionAction::Replace
+                                                      : m3d::MeshSelectionAction::Add));
+        first = false;
+        ++boundaryCount;
+    }
+    REQUIRE(boundaryCount == 4U);
+    REQUIRE(session.fillSelectedMeshBoundary(&error));
+    REQUIRE(error.empty());
+    REQUIRE(session.editableMesh()->faceCount() == 6U);
+    REQUIRE(session.meshSelection()->mode() == m3d::MeshSelectionMode::Face);
+    REQUIRE(session.meshSelection()->selectedFaces().size() == 1U);
+
+    REQUIRE(session.commitMeshEdit("Fill Boundary", &error));
+    REQUIRE(session.nextUndoName() == "Fill Boundary");
+    REQUIRE(session.undo());
+    const auto resourceId = *session.scene()->find(*object)->meshResource;
+    REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->faceCount() == 5U);
+    REQUIRE(session.redo());
+    REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->faceCount() == 6U);
+}
+
+TEST_CASE("edit mode bridge connects two equal boundary loops and cancel restores input") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Bridge Operator", &error));
+
+    m3d::EditableMesh authored;
+    const std::array<m3d::EditableVertexId, 4> bottom{
+        authored.addVertex({-1.0F,-1.0F,0.0F}), authored.addVertex({1.0F,-1.0F,0.0F}),
+        authored.addVertex({1.0F,1.0F,0.0F}), authored.addVertex({-1.0F,1.0F,0.0F})
+    };
+    const std::array<m3d::EditableVertexId, 4> top{
+        authored.addVertex({-1.0F,-1.0F,2.0F}), authored.addVertex({1.0F,-1.0F,2.0F}),
+        authored.addVertex({1.0F,1.0F,2.0F}), authored.addVertex({-1.0F,1.0F,2.0F})
+    };
+    const std::array<m3d::EditableVertexId, 4> bottomWinding{bottom[0],bottom[3],bottom[2],bottom[1]};
+    const std::array<m3d::EditableVertexId, 4> topWinding{top[0],top[1],top[2],top[3]};
+    REQUIRE(authored.addFace(bottomWinding, &error).has_value());
+    REQUIRE(authored.addFace(topWinding, &error).has_value());
+
+    m3d::MeshResource resource;
+    resource.id = m3d::ResourceId::generate();
+    resource.name = "Two Loops";
+    resource.authoring = authored;
+    REQUIRE(resource.rebuildFromAuthoring(&error));
+    const auto object = session.createMeshObject(std::move(resource), "Two Loops");
+    REQUIRE(object.has_value());
+    REQUIRE(session.saveProject(&error));
+    REQUIRE(session.beginMeshEdit(*object, &error));
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Edge));
+
+    bool first = true;
+    for (const auto& edge : session.editableMesh()->edges()) {
+        REQUIRE(session.selectMeshEdge(edge.id, first ? m3d::MeshSelectionAction::Replace
+                                                      : m3d::MeshSelectionAction::Add));
+        first = false;
+    }
+    REQUIRE(session.meshSelection()->selectedEdges().size() == 8U);
+    REQUIRE(session.bridgeSelectedMeshBoundaries(&error));
+    REQUIRE(error.empty());
+    REQUIRE(session.editableMesh()->faceCount() == 6U);
+    REQUIRE(session.editableMesh()->edgeCount() == 12U);
+    REQUIRE(session.meshSelection()->selectedFaces().size() == 4U);
+    REQUIRE(session.cancelMeshEdit());
+    const auto resourceId = *session.scene()->find(*object)->meshResource;
+    REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->faceCount() == 2U);
+    REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->edgeCount() == 8U);
 }

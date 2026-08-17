@@ -192,6 +192,22 @@ Rectangle {
         Button {
             height: 38
             visible: root.controller.editMode
+            text: "Fill"
+            enabled: root.controller.meshSelectionMode === "Edge"
+                     && root.controller.selectedMeshElementCount >= 3
+            onClicked: root.controller.fillSelectedBoundary()
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
+            text: "Bridge"
+            enabled: root.controller.meshSelectionMode === "Edge"
+                     && root.controller.selectedMeshElementCount >= 6
+            onClicked: root.controller.bridgeSelectedBoundaries()
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
             text: "Cancel"
             onClicked: root.controller.cancelEditMode()
         }
