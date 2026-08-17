@@ -176,6 +176,22 @@ Rectangle {
         Button {
             height: 38
             visible: root.controller.editMode
+            text: "Merge Active"
+            enabled: root.controller.meshSelectionMode === "Vertex"
+                     && root.controller.selectedMeshElementCount >= 2
+            onClicked: root.controller.mergeSelectedVertices()
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
+            text: "Weld"
+            enabled: root.controller.meshSelectionMode === "Vertex"
+                     && root.controller.selectedMeshElementCount >= 2
+            onClicked: root.controller.weldSelectedVertices(0.01)
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
             text: "Cancel"
             onClicked: root.controller.cancelEditMode()
         }

@@ -113,3 +113,82 @@ TEST_CASE("face region operators reject multiple selected faces until region sem
     REQUIRE(!error.empty());
     REQUIRE(session.editableMesh()->faceCount() == 6U);
 }
+
+TEST_CASE("edit mode merge to active previews and commits as one mesh undo") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+
+    const auto edge = session.editableMesh()->edges().front();
+    const auto* halfEdge = session.editableMesh()->findHalfEdge(edge.halfEdge);
+    const auto* next = halfEdge ? session.editableMesh()->findHalfEdge(halfEdge->next) : nullptr;
+    REQUIRE(halfEdge != nullptr);
+    REQUIRE(next != nullptr);
+    const auto first = halfEdge->origin;
+    const auto active = next->origin;
+    REQUIRE(session.selectMeshVertex(first));
+    REQUIRE(session.selectMeshVertex(active, m3d::MeshSelectionAction::Add));
+    REQUIRE(session.meshSelection()->activeVertex() == active);
+    REQUIRE(session.mergeSelectedMeshVertices(&error));
+    REQUIRE(error.empty());
+    REQUIRE(session.editableMesh()->vertexCount() == 7U);
+    REQUIRE(session.editableMesh()->findVertex(first) == nullptr);
+    REQUIRE(session.editableMesh()->findVertex(active) != nullptr);
+    REQUIRE(session.meshSelection()->selectedVertices().size() == 1U);
+    REQUIRE(session.meshSelection()->activeVertex() == active);
+
+    REQUIRE(session.commitMeshEdit("Merge Vertices", &error));
+    REQUIRE(session.nextUndoName() == "Merge Vertices");
+    REQUIRE(session.undo());
+    const auto resource = *session.scene()->find(*object)->meshResource;
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->vertexCount() == 8U);
+    REQUIRE(session.redo());
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->vertexCount() == 7U);
+}
+
+TEST_CASE("edit mode weld by distance keeps active representative and can cancel") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+
+    const auto edge = session.editableMesh()->edges().front();
+    const auto* halfEdge = session.editableMesh()->findHalfEdge(edge.halfEdge);
+    const auto* next = halfEdge ? session.editableMesh()->findHalfEdge(halfEdge->next) : nullptr;
+    REQUIRE(halfEdge != nullptr);
+    REQUIRE(next != nullptr);
+    REQUIRE(session.selectMeshVertex(halfEdge->origin));
+    REQUIRE(session.selectMeshVertex(next->origin, m3d::MeshSelectionAction::Add));
+    const auto active = session.meshSelection()->activeVertex();
+    REQUIRE(active.has_value());
+    REQUIRE(session.weldSelectedMeshVertices(1.01F, &error));
+    REQUIRE(session.editableMesh()->vertexCount() == 7U);
+    REQUIRE(session.meshSelection()->selectedVertices().size() == 1U);
+    REQUIRE(session.meshSelection()->activeVertex() == active);
+    REQUIRE(session.cancelMeshEdit());
+    const auto resource = *session.scene()->find(*object)->meshResource;
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->vertexCount() == 8U);
+}
+
+TEST_CASE("edit mode weld with no matching distance is a clean no-op") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+    const auto vertices = session.editableMesh()->vertices();
+    REQUIRE(vertices.size() >= 7U);
+    REQUIRE(session.selectMeshVertex(vertices[0].id));
+    REQUIRE(session.selectMeshVertex(vertices[6].id, m3d::MeshSelectionAction::Add));
+    REQUIRE(!session.weldSelectedMeshVertices(0.01F, &error));
+    REQUIRE(!error.empty());
+    REQUIRE(session.editableMesh()->vertexCount() == 8U);
+    REQUIRE(!session.isDirty());
+    REQUIRE(session.cancelMeshEdit());
+}

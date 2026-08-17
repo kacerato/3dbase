@@ -746,6 +746,30 @@ bool EditorController::subdivideSelectedFace() {
     return true;
 }
 
+bool EditorController::mergeSelectedVertices() {
+    std::string error;
+    if (!session_.mergeSelectedMeshVertices(&error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    setStatus(QStringLiteral("Vertices merged to active."));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
+bool EditorController::weldSelectedVertices(double distance) {
+    std::string error;
+    if (!session_.weldSelectedMeshVertices(static_cast<float>(distance), &error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    setStatus(QStringLiteral("Selected vertices welded."));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
 bool EditorController::beginViewportTransform(m3d::TransformConstraint constraint) {
     bool started = false;
     const auto snapping = transformSnapSettings();

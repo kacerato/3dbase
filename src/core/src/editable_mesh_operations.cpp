@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <map>
+#include <set>
 #include <utility>
 
 namespace m3d {
@@ -281,6 +283,185 @@ std::optional<std::vector<EditableFaceId>> EditableMesh::subdivideFace(EditableF
     *this = std::move(working);
     if (error) error->clear();
     return created;
+}
+
+
+std::optional<EditableVertexId> EditableMesh::mergeVertices(
+    std::span<const EditableVertexId> vertices, EditableVertexId target,
+    std::string* error) {
+    std::set<EditableVertexId> unique(vertices.begin(), vertices.end());
+    if (unique.size() < 2U) {
+        if (error) *error = "Merge requires at least two unique vertices";
+        return std::nullopt;
+    }
+    if (target.isNull() || !unique.contains(target)) {
+        if (error) *error = "Merge target must be one of the selected vertices";
+        return std::nullopt;
+    }
+    for (const auto vertex : unique) {
+        if (!findVertex(vertex)) {
+            if (error) *error = "Merge selection contains a missing vertex";
+            return std::nullopt;
+        }
+    }
+
+    std::set<EditableVertexId> sources = unique;
+    sources.erase(target);
+    EditableMesh working = *this;
+
+    struct RebuiltFace final {
+        EditableFaceId original{};
+        std::vector<EditableVertexId> vertices;
+    };
+    std::vector<RebuiltFace> affected;
+    for (const auto& face : working.faces()) {
+        const auto loop = working.faceVertices(face.id);
+        const bool touchesSource = std::any_of(loop.cbegin(), loop.cend(),
+                                               [&sources](EditableVertexId vertex) {
+                                                   return sources.contains(vertex);
+                                               });
+        if (!touchesSource) continue;
+
+        std::vector<EditableVertexId> replaced;
+        replaced.reserve(loop.size());
+        for (const auto vertex : loop) replaced.push_back(sources.contains(vertex) ? target : vertex);
+
+        std::vector<EditableVertexId> compact;
+        compact.reserve(replaced.size());
+        for (const auto vertex : replaced) {
+            if (compact.empty() || compact.back() != vertex) compact.push_back(vertex);
+        }
+        if (compact.size() > 1U && compact.front() == compact.back()) compact.pop_back();
+
+        std::set<EditableVertexId> distinct(compact.begin(), compact.end());
+        if (compact.size() >= 3U && distinct.size() != compact.size()) {
+            if (error) *error = "Merge would create a self-touching face";
+            return std::nullopt;
+        }
+        if (distinct.size() < 3U) compact.clear();
+        affected.push_back(RebuiltFace{face.id, std::move(compact)});
+    }
+    if (affected.empty()) {
+        if (error) *error = "Merge vertices are not referenced by any editable face";
+        return std::nullopt;
+    }
+
+    for (const auto& face : affected) {
+        if (!working.removeFace(face.original, error)) return std::nullopt;
+    }
+
+    for (const auto source : sources) {
+        for (const auto& halfEdge : working.halfEdges()) {
+            if (halfEdge.origin == source || working.destination(halfEdge.id) == source) {
+                if (error) *error = "Merge source is still referenced after removing incident faces";
+                return std::nullopt;
+            }
+        }
+        if (source.isNull() || static_cast<std::size_t>(source.value) > working.vertices_.size()) {
+            if (error) *error = "Merge source vertex slot is invalid";
+            return std::nullopt;
+        }
+        auto& slot = working.vertices_[static_cast<std::size_t>(source.value - 1U)];
+        if (!slot) {
+            if (error) *error = "Merge source vertex disappeared unexpectedly";
+            return std::nullopt;
+        }
+        slot.reset();
+        --working.vertexCount_;
+    }
+
+    for (const auto& face : affected) {
+        if (face.vertices.empty()) continue;
+        if (!working.addFace(face.vertices, error)) return std::nullopt;
+    }
+
+    if (!working.validate(error)) return std::nullopt;
+    *this = std::move(working);
+    if (error) error->clear();
+    return target;
+}
+
+std::optional<EditableVertexWeldResult> EditableMesh::weldVertices(
+    std::span<const EditableVertexId> vertices, float distance,
+    std::optional<EditableVertexId> preferredTarget, std::string* error) {
+    if (!std::isfinite(distance) || distance <= 0.0F) {
+        if (error) *error = "Weld distance must be finite and positive";
+        return std::nullopt;
+    }
+
+    std::set<EditableVertexId> uniqueSet(vertices.begin(), vertices.end());
+    if (uniqueSet.size() < 2U) {
+        if (error) *error = "Weld requires at least two unique vertices";
+        return std::nullopt;
+    }
+    if (preferredTarget && !uniqueSet.contains(*preferredTarget)) {
+        if (error) *error = "Preferred weld target must be selected";
+        return std::nullopt;
+    }
+
+    std::vector<EditableVertexId> unique(uniqueSet.begin(), uniqueSet.end());
+    std::vector<Vec3> positions;
+    positions.reserve(unique.size());
+    for (const auto id : unique) {
+        const auto* vertex = findVertex(id);
+        if (!vertex) {
+            if (error) *error = "Weld selection contains a missing vertex";
+            return std::nullopt;
+        }
+        positions.push_back(vertex->position);
+    }
+
+    std::vector<std::size_t> parent(unique.size());
+    for (std::size_t index = 0; index < parent.size(); ++index) parent[index] = index;
+    const auto findRoot = [&parent](std::size_t index) {
+        std::size_t root = index;
+        while (parent[root] != root) root = parent[root];
+        while (parent[index] != index) {
+            const std::size_t next = parent[index];
+            parent[index] = root;
+            index = next;
+        }
+        return root;
+    };
+    const float distanceSquared = distance * distance;
+    for (std::size_t left = 0; left < unique.size(); ++left) {
+        for (std::size_t right = left + 1U; right < unique.size(); ++right) {
+            const float dx = positions[left].x - positions[right].x;
+            const float dy = positions[left].y - positions[right].y;
+            const float dz = positions[left].z - positions[right].z;
+            if (dx * dx + dy * dy + dz * dz > distanceSquared) continue;
+            const std::size_t leftRoot = findRoot(left);
+            const std::size_t rightRoot = findRoot(right);
+            if (leftRoot != rightRoot) parent[rightRoot] = leftRoot;
+        }
+    }
+
+    std::map<std::size_t, std::vector<EditableVertexId>> groups;
+    for (std::size_t index = 0; index < unique.size(); ++index) groups[findRoot(index)].push_back(unique[index]);
+
+    EditableMesh working = *this;
+    EditableVertexWeldResult result;
+    result.survivors.reserve(groups.size());
+    for (auto& [_, group] : groups) {
+        std::sort(group.begin(), group.end());
+        EditableVertexId representative = group.front();
+        if (preferredTarget && std::find(group.cbegin(), group.cend(), *preferredTarget) != group.cend()) {
+            representative = *preferredTarget;
+        }
+        if (group.size() > 1U) {
+            if (!working.mergeVertices(group, representative, error)) return std::nullopt;
+            result.mergedCount += group.size() - 1U;
+        }
+        result.survivors.push_back(representative);
+    }
+
+    std::sort(result.survivors.begin(), result.survivors.end());
+    if (result.mergedCount > 0U) {
+        if (!working.validate(error)) return std::nullopt;
+        *this = std::move(working);
+    }
+    if (error) error->clear();
+    return result;
 }
 
 } // namespace m3d

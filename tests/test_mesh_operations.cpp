@@ -3,8 +3,11 @@
 #include "mobile3d/core/editable_mesh.hpp"
 #include "mobile3d/core/mesh_resource.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <string>
+#include <vector>
 
 TEST_CASE("face extrude creates a closed quad-sided prism extension") {
     auto mesh = m3d::EditableMesh::makeCube(1.0F);
@@ -106,4 +109,96 @@ TEST_CASE("invalid inset leaves topology unchanged") {
     REQUIRE(after.halfEdges == before.halfEdges);
     REQUIRE(after.edges == before.edges);
     REQUIRE(after.faces == before.faces);
+}
+
+TEST_CASE("vertex merge to active preserves untouched topology identities") {
+    auto mesh = m3d::EditableMesh::makeCube(1.0F);
+    const auto edge = mesh.edges().front();
+    const auto* halfEdge = mesh.findHalfEdge(edge.halfEdge);
+    REQUIRE(halfEdge != nullptr);
+    const auto* next = mesh.findHalfEdge(halfEdge->next);
+    REQUIRE(next != nullptr);
+    const auto target = halfEdge->origin;
+    const auto source = next->origin;
+
+    std::optional<m3d::EditableFaceId> untouchedFace;
+    std::vector<m3d::EditableVertexId> untouchedLoop;
+    for (const auto& face : mesh.faces()) {
+        const auto loop = mesh.faceVertices(face.id);
+        if (std::find(loop.cbegin(), loop.cend(), source) == loop.cend() &&
+            std::find(loop.cbegin(), loop.cend(), target) == loop.cend()) {
+            untouchedFace = face.id;
+            untouchedLoop = loop;
+            break;
+        }
+    }
+    REQUIRE(untouchedFace.has_value());
+
+    const std::array<m3d::EditableVertexId, 2> selected{target, source};
+    std::string error;
+    const auto merged = mesh.mergeVertices(selected, target, &error);
+    REQUIRE(merged == target);
+    REQUIRE(error.empty());
+    REQUIRE(mesh.validate(&error));
+    REQUIRE(mesh.findVertex(target) != nullptr);
+    REQUIRE(mesh.findVertex(source) == nullptr);
+    REQUIRE(mesh.vertexCount() == 7U);
+    REQUIRE(mesh.edgeCount() == 11U);
+    REQUIRE(mesh.halfEdgeCount() == 22U);
+    REQUIRE(mesh.faceCount() == 6U);
+    REQUIRE(mesh.findFace(*untouchedFace) != nullptr);
+    REQUIRE(mesh.faceVertices(*untouchedFace) == untouchedLoop);
+}
+
+TEST_CASE("weld by distance prefers active target and reports merged count") {
+    auto mesh = m3d::EditableMesh::makeCube(1.0F);
+    const auto edge = mesh.edges().front();
+    const auto* halfEdge = mesh.findHalfEdge(edge.halfEdge);
+    const auto* next = halfEdge ? mesh.findHalfEdge(halfEdge->next) : nullptr;
+    REQUIRE(halfEdge != nullptr);
+    REQUIRE(next != nullptr);
+    const auto active = halfEdge->origin;
+    const auto other = next->origin;
+    const std::array<m3d::EditableVertexId, 2> selected{active, other};
+    std::string error;
+
+    const auto result = mesh.weldVertices(selected, 1.01F, active, &error);
+    REQUIRE(result.has_value());
+    REQUIRE(error.empty());
+    REQUIRE(result->mergedCount == 1U);
+    REQUIRE(result->survivors.size() == 1U);
+    REQUIRE(result->survivors.front() == active);
+    REQUIRE(mesh.findVertex(other) == nullptr);
+    REQUIRE(mesh.vertexCount() == 7U);
+    REQUIRE(mesh.validate(&error));
+}
+
+TEST_CASE("weld with no vertices inside threshold is an exact no-op") {
+    auto mesh = m3d::EditableMesh::makeCube(1.0F);
+    const auto vertices = mesh.vertices();
+    REQUIRE(vertices.size() >= 2U);
+    const std::array<m3d::EditableVertexId, 2> selected{vertices[0].id, vertices[6].id};
+    const auto before = mesh.snapshot();
+    std::string error;
+    const auto result = mesh.weldVertices(selected, 0.01F, vertices[0].id, &error);
+    REQUIRE(result.has_value());
+    REQUIRE(result->mergedCount == 0U);
+    REQUIRE(mesh.snapshot().vertices == before.vertices);
+    REQUIRE(mesh.snapshot().halfEdges == before.halfEdges);
+    REQUIRE(mesh.snapshot().edges == before.edges);
+    REQUIRE(mesh.snapshot().faces == before.faces);
+}
+
+TEST_CASE("invalid merge target leaves topology unchanged") {
+    auto mesh = m3d::EditableMesh::makeCube();
+    const auto vertices = mesh.vertices();
+    const std::array<m3d::EditableVertexId, 2> selected{vertices[0].id, vertices[1].id};
+    const auto before = mesh.snapshot();
+    std::string error;
+    REQUIRE(!mesh.mergeVertices(selected, vertices[2].id, &error).has_value());
+    REQUIRE(!error.empty());
+    REQUIRE(mesh.snapshot().vertices == before.vertices);
+    REQUIRE(mesh.snapshot().halfEdges == before.halfEdges);
+    REQUIRE(mesh.snapshot().edges == before.edges);
+    REQUIRE(mesh.snapshot().faces == before.faces);
 }

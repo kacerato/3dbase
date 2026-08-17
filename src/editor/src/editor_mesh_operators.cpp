@@ -79,4 +79,74 @@ bool EditorSession::subdivideSelectedMeshFace(std::string* error) {
     return true;
 }
 
+
+bool EditorSession::mergeSelectedMeshVertices(std::string* error) {
+    if (!meshEditTransaction_) {
+        if (error) *error = "Edit Mode is not active";
+        return false;
+    }
+    auto& selection = meshEditTransaction_->selection;
+    if (selection.mode() != MeshSelectionMode::Vertex) {
+        if (error) *error = "Merge requires Vertex selection mode";
+        return false;
+    }
+    const auto selected = selection.selectedVertices();
+    const auto active = selection.activeVertex();
+    if (selected.size() < 2U || !active) {
+        if (error) *error = "Merge to Active requires at least two selected vertices and an active vertex";
+        return false;
+    }
+
+    EditableMesh candidate = meshEditTransaction_->working;
+    const auto merged = candidate.mergeVertices(selected, *active, error);
+    if (!merged || !applyMeshEditPreview(candidate, error)) return false;
+
+    selection.clear();
+    selection.setMode(MeshSelectionMode::Vertex);
+    (void)selection.select(meshEditTransaction_->working, *merged, MeshSelectionAction::Replace);
+    ++selectionRevision_;
+    ++uiRevision_;
+    if (error) error->clear();
+    return true;
+}
+
+bool EditorSession::weldSelectedMeshVertices(float distance, std::string* error) {
+    if (!meshEditTransaction_) {
+        if (error) *error = "Edit Mode is not active";
+        return false;
+    }
+    auto& selection = meshEditTransaction_->selection;
+    if (selection.mode() != MeshSelectionMode::Vertex) {
+        if (error) *error = "Weld requires Vertex selection mode";
+        return false;
+    }
+    const auto selected = selection.selectedVertices();
+    if (selected.size() < 2U) {
+        if (error) *error = "Weld requires at least two selected vertices";
+        return false;
+    }
+
+    EditableMesh candidate = meshEditTransaction_->working;
+    const auto result = candidate.weldVertices(selected, distance, selection.activeVertex(), error);
+    if (!result) return false;
+    if (result->mergedCount == 0U) {
+        if (error) *error = "No selected vertices are within the weld distance";
+        return false;
+    }
+    if (!applyMeshEditPreview(candidate, error)) return false;
+
+    selection.clear();
+    selection.setMode(MeshSelectionMode::Vertex);
+    bool first = true;
+    for (const auto survivor : result->survivors) {
+        (void)selection.select(meshEditTransaction_->working, survivor,
+                               first ? MeshSelectionAction::Replace : MeshSelectionAction::Add);
+        first = false;
+    }
+    ++selectionRevision_;
+    ++uiRevision_;
+    if (error) error->clear();
+    return true;
+}
+
 } // namespace m3d

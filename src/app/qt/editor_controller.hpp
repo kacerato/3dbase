@@ -161,6 +161,8 @@ public:
     Q_INVOKABLE bool extrudeSelectedFace(double distance = 0.25);
     Q_INVOKABLE bool insetSelectedFace(double ratio = 0.25);
     Q_INVOKABLE bool subdivideSelectedFace();
+    Q_INVOKABLE bool mergeSelectedVertices();
+    Q_INVOKABLE bool weldSelectedVertices(double distance = 0.01);
 
     // Viewport-only interaction boundary. Vulkan/Qt input supplies deltas, while
     // all scene mutation remains inside the EditorSession transaction system.

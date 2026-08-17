@@ -131,16 +131,16 @@ At this point the first APK may become useful enough for internal testing, but p
 ## Stage 5 — Geometry resource and Edit Mode
 
 - [x] Mesh asset/resource model separated from SceneObject.
-- [ ] Vertex/half-edge(or equivalent topology) representation.
-- [ ] Vertex/Edge/Face selection.
-- [ ] Mesh edit transaction system.
-- [ ] Extrude.
-- [ ] Inset.
+- [x] Vertex/half-edge(or equivalent topology) representation.
+- [x] Vertex/Edge/Face selection.
+- [x] Mesh edit transaction system.
+- [x] Extrude.
+- [x] Inset.
 - [ ] Loop cut.
 - [ ] Bevel.
 - [ ] Knife.
-- [ ] Merge/Weld.
-- [ ] Subdivide.
+- [x] Merge/Weld.
+- [x] Subdivide.
 - [ ] Fill/Grid Fill.
 - [ ] Bridge loops.
 - [ ] Normals tools.

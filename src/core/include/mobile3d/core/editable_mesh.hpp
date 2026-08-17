@@ -66,6 +66,11 @@ struct EditableMeshSnapshot final {
     std::vector<EditableFace> faces;
 };
 
+struct EditableVertexWeldResult final {
+    std::vector<EditableVertexId> survivors;
+    std::size_t mergedCount{0};
+};
+
 class EditableMesh final {
 public:
     EditableMesh() = default;
@@ -94,6 +99,13 @@ public:
                                                            std::string* error = nullptr);
     [[nodiscard]] std::optional<std::vector<EditableFaceId>> subdivideFace(
         EditableFaceId face, std::string* error = nullptr);
+    [[nodiscard]] std::optional<EditableVertexId> mergeVertices(
+        std::span<const EditableVertexId> vertices, EditableVertexId target,
+        std::string* error = nullptr);
+    [[nodiscard]] std::optional<EditableVertexWeldResult> weldVertices(
+        std::span<const EditableVertexId> vertices, float distance,
+        std::optional<EditableVertexId> preferredTarget = std::nullopt,
+        std::string* error = nullptr);
 
     [[nodiscard]] std::size_t vertexCount() const noexcept { return vertexCount_; }
     [[nodiscard]] std::size_t halfEdgeCount() const noexcept { return halfEdgeCount_; }
