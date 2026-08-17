@@ -192,6 +192,14 @@ Rectangle {
         Button {
             height: 38
             visible: root.controller.editMode
+            text: "Loop Cut"
+            enabled: root.controller.meshSelectionMode === "Edge"
+                     && root.controller.selectedMeshElementCount === 1
+            onClicked: root.controller.loopCutSelectedEdge()
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
             text: "Fill"
             enabled: root.controller.meshSelectionMode === "Edge"
                      && root.controller.selectedMeshElementCount >= 3

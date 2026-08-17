@@ -286,3 +286,32 @@ TEST_CASE("edit mode bridge connects two equal boundary loops and cancel restore
     REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->faceCount() == 2U);
     REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->edgeCount() == 8U);
 }
+
+TEST_CASE("edit mode loop cut selects the generated quad ring and commits through undo") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Edge));
+    const auto startEdge = session.editableMesh()->edges().front().id;
+    REQUIRE(session.selectMeshEdge(startEdge));
+    REQUIRE(session.loopCutSelectedMeshEdge(&error));
+    REQUIRE(error.empty());
+    REQUIRE(session.editableMesh()->vertexCount() == 12U);
+    REQUIRE(session.editableMesh()->edgeCount() == 20U);
+    REQUIRE(session.editableMesh()->faceCount() == 10U);
+    REQUIRE(session.meshSelection()->mode() == m3d::MeshSelectionMode::Edge);
+    REQUIRE(session.meshSelection()->selectedEdges().size() == 4U);
+
+    REQUIRE(session.commitMeshEdit("Loop Cut", &error));
+    REQUIRE(session.nextUndoName() == "Loop Cut");
+    REQUIRE(session.undo());
+    const auto resource = *session.scene()->find(*object)->meshResource;
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->vertexCount() == 8U);
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 6U);
+    REQUIRE(session.redo());
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->vertexCount() == 12U);
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 10U);
+}

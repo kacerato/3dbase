@@ -291,3 +291,55 @@ TEST_CASE("fill rejects an incomplete boundary selection atomically") {
     REQUIRE(mesh.snapshot().edges == before.edges);
     REQUIRE(mesh.snapshot().faces == before.faces);
 }
+
+TEST_CASE("centered loop cut propagates through an entire quad ring") {
+    auto mesh = m3d::EditableMesh::makeCube(2.0F);
+    const auto originalFaces = mesh.faces();
+    std::map<m3d::EditableFaceId, std::vector<m3d::EditableVertexId>> originalLoops;
+    for (const auto& face : originalFaces) originalLoops.emplace(face.id, mesh.faceVertices(face.id));
+    const auto startEdge = mesh.edges().front().id;
+    std::string error;
+
+    const auto result = mesh.loopCut(startEdge, &error);
+    REQUIRE(result.has_value());
+    REQUIRE(error.empty());
+    REQUIRE(result->vertices.size() == 4U);
+    REQUIRE(result->edges.size() == 4U);
+    REQUIRE(result->faces.size() == 8U);
+    REQUIRE(mesh.validate(&error));
+    REQUIRE(mesh.vertexCount() == 12U);
+    REQUIRE(mesh.edgeCount() == 20U);
+    REQUIRE(mesh.halfEdgeCount() == 40U);
+    REQUIRE(mesh.faceCount() == 10U);
+
+    std::size_t untouched = 0U;
+    for (const auto& [faceId, loop] : originalLoops) {
+        if (!mesh.findFace(faceId)) continue;
+        ++untouched;
+        REQUIRE(mesh.faceVertices(faceId) == loop);
+    }
+    REQUIRE(untouched == 2U);
+
+    m3d::MeshResource render;
+    render.id = m3d::ResourceId::generate();
+    render.authoring = mesh;
+    REQUIRE(render.rebuildFromAuthoring(&error));
+    REQUIRE(render.validate(&error));
+}
+
+TEST_CASE("loop cut rejects a non quad ring without changing topology") {
+    m3d::EditableMesh mesh;
+    const auto a = mesh.addVertex({0.0F,0.0F,0.0F});
+    const auto b = mesh.addVertex({1.0F,0.0F,0.0F});
+    const auto c = mesh.addVertex({0.0F,1.0F,0.0F});
+    const std::array<m3d::EditableVertexId,3> triangle{a,b,c};
+    std::string error;
+    REQUIRE(mesh.addFace(triangle,&error).has_value());
+    const auto before = mesh.snapshot();
+    REQUIRE(!mesh.loopCut(mesh.edges().front().id,&error).has_value());
+    REQUIRE(!error.empty());
+    REQUIRE(mesh.snapshot().vertices == before.vertices);
+    REQUIRE(mesh.snapshot().halfEdges == before.halfEdges);
+    REQUIRE(mesh.snapshot().edges == before.edges);
+    REQUIRE(mesh.snapshot().faces == before.faces);
+}

@@ -145,7 +145,7 @@ At this point the first APK may become useful enough for internal testing, but p
 - [ ] Bridge loops.
 - [ ] Normals tools.
 
-Current boundary-tool baseline: single closed-loop Fill is implemented; Bridge supports two disjoint closed loops with equal vertex counts and automatic minimum-distance alignment. Grid Fill and unequal-count bridge policies remain pending before those checklist items are considered complete.
+Current modeling baselines not yet considered checklist-complete: centered Loop Cut propagates across complete quad rings, but edge slide and multiple cuts remain pending. Single closed-loop Fill is implemented; Bridge supports two disjoint closed loops with equal vertex counts and automatic minimum-distance alignment. Grid Fill and unequal-count bridge policies remain pending.
 
 Exit criterion: useful polygon modeling can be completed entirely on mobile.
 

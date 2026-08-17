@@ -794,6 +794,18 @@ bool EditorController::bridgeSelectedBoundaries() {
     return true;
 }
 
+bool EditorController::loopCutSelectedEdge() {
+    std::string error;
+    if (!session_.loopCutSelectedMeshEdge(&error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    setStatus(QStringLiteral("Centered quad-ring Loop Cut created."));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
 bool EditorController::beginViewportTransform(m3d::TransformConstraint constraint) {
     bool started = false;
     const auto snapping = transformSnapSettings();

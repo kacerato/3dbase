@@ -71,6 +71,12 @@ struct EditableVertexWeldResult final {
     std::size_t mergedCount{0};
 };
 
+struct EditableLoopCutResult final {
+    std::vector<EditableVertexId> vertices;
+    std::vector<EditableEdgeId> edges;
+    std::vector<EditableFaceId> faces;
+};
+
 class EditableMesh final {
 public:
     EditableMesh() = default;
@@ -110,6 +116,8 @@ public:
         std::span<const EditableEdgeId> edges, std::string* error = nullptr);
     [[nodiscard]] std::optional<std::vector<EditableFaceId>> bridgeBoundaryLoops(
         std::span<const EditableEdgeId> edges, std::string* error = nullptr);
+    [[nodiscard]] std::optional<EditableLoopCutResult> loopCut(
+        EditableEdgeId edge, std::string* error = nullptr);
 
     [[nodiscard]] std::size_t vertexCount() const noexcept { return vertexCount_; }
     [[nodiscard]] std::size_t halfEdgeCount() const noexcept { return halfEdgeCount_; }
