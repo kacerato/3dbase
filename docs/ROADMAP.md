@@ -136,7 +136,7 @@ At this point the first APK may become useful enough for internal testing, but p
 - [x] Mesh edit transaction system.
 - [x] Extrude.
 - [x] Inset.
-- [ ] Loop cut.
+- [x] Loop cut.
 - [ ] Bevel.
 - [ ] Knife.
 - [x] Merge/Weld.
@@ -145,7 +145,7 @@ At this point the first APK may become useful enough for internal testing, but p
 - [ ] Bridge loops.
 - [ ] Normals tools.
 
-Current modeling baselines not yet considered checklist-complete: centered Loop Cut propagates across complete quad rings, but edge slide and multiple cuts remain pending. Single closed-loop Fill is implemented; Bridge supports two disjoint closed loops with equal vertex counts and automatic minimum-distance alignment. Grid Fill and unequal-count bridge policies remain pending. Vertex/Edge/Face delete is available with topology-aware incident-face removal, allowing open boundaries to be authored directly in Edit Mode.
+Current modeling baselines: Loop Cut propagates across complete quad rings with 1–32 evenly spaced cuts; Edge Slide remains a separate follow-up operator. Single closed-loop Fill is implemented; Bridge supports two disjoint closed loops with equal vertex counts and automatic minimum-distance alignment. Grid Fill and unequal-count bridge policies remain pending. Vertex/Edge/Face delete is available with topology-aware incident-face removal, allowing open boundaries to be authored directly in Edit Mode.
 
 Exit criterion: useful polygon modeling can be completed entirely on mobile.
 

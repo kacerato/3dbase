@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -403,6 +404,49 @@ TEST_CASE("delete all faces is rejected atomically") {
     std::string error;
     REQUIRE(!mesh.deleteFaces(selected, &error));
     REQUIRE(!error.empty());
+    REQUIRE(mesh.snapshot().vertices == before.vertices);
+    REQUIRE(mesh.snapshot().halfEdges == before.halfEdges);
+    REQUIRE(mesh.snapshot().edges == before.edges);
+    REQUIRE(mesh.snapshot().faces == before.faces);
+}
+
+TEST_CASE("multi loop cut creates evenly spaced shared rings") {
+    auto mesh = m3d::EditableMesh::makeCube(2.0F);
+    const auto startEdge = mesh.edges().front().id;
+    std::string error;
+    const auto result = mesh.loopCut(startEdge, 3U, &error);
+    REQUIRE(result.has_value());
+    REQUIRE(error.empty());
+    REQUIRE(result->vertices.size() == 12U);
+    REQUIRE(result->edges.size() == 12U);
+    REQUIRE(result->faces.size() == 16U);
+    REQUIRE(mesh.validate(&error));
+    REQUIRE(mesh.vertexCount() == 20U);
+    REQUIRE(mesh.edgeCount() == 36U);
+    REQUIRE(mesh.halfEdgeCount() == 72U);
+    REQUIRE(mesh.faceCount() == 18U);
+
+    std::set<float> xCoordinates;
+    std::set<float> yCoordinates;
+    std::set<float> zCoordinates;
+    for (const auto vertexId : result->vertices) {
+        const auto* vertex = mesh.findVertex(vertexId);
+        REQUIRE(vertex != nullptr);
+        if (std::abs(vertex->position.x) < 0.999F) xCoordinates.insert(vertex->position.x);
+        if (std::abs(vertex->position.y) < 0.999F) yCoordinates.insert(vertex->position.y);
+        if (std::abs(vertex->position.z) < 0.999F) zCoordinates.insert(vertex->position.z);
+    }
+    REQUIRE(xCoordinates.size() == 3U || yCoordinates.size() == 3U || zCoordinates.size() == 3U);
+}
+
+TEST_CASE("multi loop cut rejects zero and excessive cut counts atomically") {
+    auto mesh = m3d::EditableMesh::makeCube();
+    const auto edge = mesh.edges().front().id;
+    const auto before = mesh.snapshot();
+    std::string error;
+    REQUIRE(!mesh.loopCut(edge, 0U, &error).has_value());
+    REQUIRE(!error.empty());
+    REQUIRE(!mesh.loopCut(edge, 33U, &error).has_value());
     REQUIRE(mesh.snapshot().vertices == before.vertices);
     REQUIRE(mesh.snapshot().halfEdges == before.halfEdges);
     REQUIRE(mesh.snapshot().edges == before.edges);

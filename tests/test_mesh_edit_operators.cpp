@@ -404,3 +404,31 @@ TEST_CASE("edit mode refuses deleting the last editable face") {
     REQUIRE(!session.isDirty());
     REQUIRE(session.cancelMeshEdit());
 }
+
+TEST_CASE("edit mode multi loop cut remains one committed mesh transaction") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Edge));
+    const auto startEdge = session.editableMesh()->edges().front().id;
+    REQUIRE(session.selectMeshEdge(startEdge));
+    REQUIRE(session.loopCutSelectedMeshEdge(3U, &error));
+    REQUIRE(error.empty());
+    REQUIRE(session.editableMesh()->vertexCount() == 20U);
+    REQUIRE(session.editableMesh()->edgeCount() == 36U);
+    REQUIRE(session.editableMesh()->faceCount() == 18U);
+    REQUIRE(session.meshSelection()->selectedEdges().size() == 12U);
+
+    REQUIRE(session.commitMeshEdit("Loop Cut x3", &error));
+    REQUIRE(session.nextUndoName() == "Loop Cut x3");
+    REQUIRE(session.undo());
+    const auto resource = *session.scene()->find(*object)->meshResource;
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->vertexCount() == 8U);
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 6U);
+    REQUIRE(session.redo());
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->vertexCount() == 20U);
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 18U);
+}

@@ -794,13 +794,17 @@ bool EditorController::bridgeSelectedBoundaries() {
     return true;
 }
 
-bool EditorController::loopCutSelectedEdge() {
+bool EditorController::loopCutSelectedEdge(int cuts) {
+    if (cuts < 1 || cuts > 32) {
+        setStatus(QStringLiteral("Loop Cut count must be between 1 and 32."));
+        return false;
+    }
     std::string error;
-    if (!session_.loopCutSelectedMeshEdge(&error)) {
+    if (!session_.loopCutSelectedMeshEdge(static_cast<std::uint32_t>(cuts), &error)) {
         setStatus(QString::fromStdString(error));
         return false;
     }
-    setStatus(QStringLiteral("Centered quad-ring Loop Cut created."));
+    setStatus(QStringLiteral("Loop Cut created with %1 cut(s).").arg(cuts));
     refreshUi();
     emit editModeChanged();
     return true;

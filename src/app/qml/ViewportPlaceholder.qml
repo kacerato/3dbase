@@ -189,13 +189,23 @@ Rectangle {
                      && root.controller.selectedMeshElementCount >= 2
             onClicked: root.controller.weldSelectedVertices(0.01)
         }
+        SpinBox {
+            id: loopCutCount
+            height: 38
+            width: 86
+            visible: root.controller.editMode && root.controller.meshSelectionMode === "Edge"
+            from: 1
+            to: 32
+            value: 1
+            editable: false
+        }
         Button {
             height: 38
             visible: root.controller.editMode
-            text: "Loop Cut"
+            text: "Loop Cut ×" + loopCutCount.value
             enabled: root.controller.meshSelectionMode === "Edge"
                      && root.controller.selectedMeshElementCount === 1
-            onClicked: root.controller.loopCutSelectedEdge()
+            onClicked: root.controller.loopCutSelectedEdge(loopCutCount.value)
         }
         Button {
             height: 38

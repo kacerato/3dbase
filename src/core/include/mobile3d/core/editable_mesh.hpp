@@ -118,6 +118,8 @@ public:
         std::span<const EditableEdgeId> edges, std::string* error = nullptr);
     [[nodiscard]] std::optional<EditableLoopCutResult> loopCut(
         EditableEdgeId edge, std::string* error = nullptr);
+    [[nodiscard]] std::optional<EditableLoopCutResult> loopCut(
+        EditableEdgeId edge, std::uint32_t cuts, std::string* error = nullptr);
     [[nodiscard]] bool deleteFaces(std::span<const EditableFaceId> faces,
                                    std::string* error = nullptr);
     [[nodiscard]] bool deleteEdges(std::span<const EditableEdgeId> edges,
