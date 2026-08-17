@@ -216,6 +216,13 @@ Rectangle {
         Button {
             height: 38
             visible: root.controller.editMode
+            text: "Delete"
+            enabled: root.controller.selectedMeshElementCount > 0
+            onClicked: root.controller.deleteSelectedMeshElements()
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
             text: "Cancel"
             onClicked: root.controller.cancelEditMode()
         }

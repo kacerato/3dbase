@@ -315,3 +315,92 @@ TEST_CASE("edit mode loop cut selects the generated quad ring and commits throug
     REQUIRE(session.scene()->findMeshResource(resource)->authoring->vertexCount() == 12U);
     REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 10U);
 }
+
+TEST_CASE("edit mode delete face previews and undo restores exact authored topology") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Face));
+    const auto face = session.editableMesh()->faces().front().id;
+    REQUIRE(session.selectMeshFace(face));
+    REQUIRE(session.deleteSelectedMeshElements(&error));
+    REQUIRE(error.empty());
+    REQUIRE(session.editableMesh()->faceCount() == 5U);
+    REQUIRE(session.meshSelection()->empty());
+    REQUIRE(session.commitMeshEdit("Delete Face", &error));
+    REQUIRE(session.nextUndoName() == "Delete Face");
+    REQUIRE(session.undo());
+    const auto resource = *session.scene()->find(*object)->meshResource;
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 6U);
+    REQUIRE(session.redo());
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 5U);
+}
+
+TEST_CASE("edit mode delete edge removes its incident faces and cancel restores cube") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Edge));
+    const auto edge = session.editableMesh()->edges().front().id;
+    REQUIRE(session.selectMeshEdge(edge));
+    REQUIRE(session.deleteSelectedMeshElements(&error));
+    REQUIRE(session.editableMesh()->faceCount() == 4U);
+    REQUIRE(session.editableMesh()->edgeCount() == 11U);
+    REQUIRE(session.cancelMeshEdit());
+    const auto resource = *session.scene()->find(*object)->meshResource;
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 6U);
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->edgeCount() == 12U);
+}
+
+TEST_CASE("edit mode delete vertex removes incident topology and keeps remaining mesh valid") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+    const auto vertex = session.editableMesh()->vertices().front().id;
+    REQUIRE(session.selectMeshVertex(vertex));
+    REQUIRE(session.deleteSelectedMeshElements(&error));
+    REQUIRE(error.empty());
+    REQUIRE(session.editableMesh()->vertexCount() == 7U);
+    REQUIRE(session.editableMesh()->faceCount() == 3U);
+    REQUIRE(session.editableMesh()->findVertex(vertex) == nullptr);
+    REQUIRE(session.cancelMeshEdit());
+}
+
+TEST_CASE("edit mode refuses deleting the last editable face") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Single Face Delete", &error));
+    m3d::EditableMesh authored;
+    const auto a = authored.addVertex({0.0F,0.0F,0.0F});
+    const auto b = authored.addVertex({1.0F,0.0F,0.0F});
+    const auto c = authored.addVertex({0.0F,1.0F,0.0F});
+    const std::array<m3d::EditableVertexId,3> triangle{a,b,c};
+    REQUIRE(authored.addFace(triangle,&error).has_value());
+    m3d::MeshResource resource;
+    resource.id = m3d::ResourceId::generate();
+    resource.name = "Triangle";
+    resource.authoring = authored;
+    REQUIRE(resource.rebuildFromAuthoring(&error));
+    const auto object = session.createMeshObject(std::move(resource), "Triangle");
+    REQUIRE(object.has_value());
+    REQUIRE(session.saveProject(&error));
+    REQUIRE(session.beginMeshEdit(*object,&error));
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Face));
+    REQUIRE(session.selectMeshFace(session.editableMesh()->faces().front().id));
+    REQUIRE(!session.deleteSelectedMeshElements(&error));
+    REQUIRE(!error.empty());
+    REQUIRE(session.editableMesh()->faceCount() == 1U);
+    REQUIRE(!session.isDirty());
+    REQUIRE(session.cancelMeshEdit());
+}

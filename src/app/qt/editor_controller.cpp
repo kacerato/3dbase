@@ -806,6 +806,18 @@ bool EditorController::loopCutSelectedEdge() {
     return true;
 }
 
+bool EditorController::deleteSelectedMeshElements() {
+    std::string error;
+    if (!session_.deleteSelectedMeshElements(&error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    setStatus(QStringLiteral("Selected mesh elements deleted."));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
 bool EditorController::beginViewportTransform(m3d::TransformConstraint constraint) {
     bool started = false;
     const auto snapping = transformSnapSettings();

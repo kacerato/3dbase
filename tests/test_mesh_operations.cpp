@@ -343,3 +343,68 @@ TEST_CASE("loop cut rejects a non quad ring without changing topology") {
     REQUIRE(mesh.snapshot().edges == before.edges);
     REQUIRE(mesh.snapshot().faces == before.faces);
 }
+
+TEST_CASE("delete face opens topology without deleting its vertices") {
+    auto mesh = m3d::EditableMesh::makeCube();
+    const auto face = mesh.faces().front().id;
+    const std::array<m3d::EditableFaceId, 1> selected{face};
+    std::string error;
+    REQUIRE(mesh.deleteFaces(selected, &error));
+    REQUIRE(error.empty());
+    REQUIRE(mesh.validate(&error));
+    REQUIRE(mesh.vertexCount() == 8U);
+    REQUIRE(mesh.edgeCount() == 12U);
+    REQUIRE(mesh.halfEdgeCount() == 20U);
+    REQUIRE(mesh.faceCount() == 5U);
+    REQUIRE(mesh.findFace(face) == nullptr);
+    std::size_t boundaryEdges = 0U;
+    for (const auto& edge : mesh.edges()) {
+        const auto* halfEdge = mesh.findHalfEdge(edge.halfEdge);
+        if (halfEdge && halfEdge->twin.isNull()) ++boundaryEdges;
+    }
+    REQUIRE(boundaryEdges == 4U);
+}
+
+TEST_CASE("delete edge removes both incident cube faces") {
+    auto mesh = m3d::EditableMesh::makeCube();
+    const auto edge = mesh.edges().front().id;
+    const std::array<m3d::EditableEdgeId, 1> selected{edge};
+    std::string error;
+    REQUIRE(mesh.deleteEdges(selected, &error));
+    REQUIRE(error.empty());
+    REQUIRE(mesh.validate(&error));
+    REQUIRE(mesh.vertexCount() == 8U);
+    REQUIRE(mesh.edgeCount() == 11U);
+    REQUIRE(mesh.halfEdgeCount() == 16U);
+    REQUIRE(mesh.faceCount() == 4U);
+    REQUIRE(mesh.findEdge(edge) == nullptr);
+}
+
+TEST_CASE("delete vertex removes every incident face then the isolated vertex") {
+    auto mesh = m3d::EditableMesh::makeCube();
+    const auto vertex = mesh.vertices().front().id;
+    const std::array<m3d::EditableVertexId, 1> selected{vertex};
+    std::string error;
+    REQUIRE(mesh.deleteVertices(selected, &error));
+    REQUIRE(error.empty());
+    REQUIRE(mesh.validate(&error));
+    REQUIRE(mesh.vertexCount() == 7U);
+    REQUIRE(mesh.edgeCount() == 9U);
+    REQUIRE(mesh.halfEdgeCount() == 12U);
+    REQUIRE(mesh.faceCount() == 3U);
+    REQUIRE(mesh.findVertex(vertex) == nullptr);
+}
+
+TEST_CASE("delete all faces is rejected atomically") {
+    auto mesh = m3d::EditableMesh::makeCube();
+    std::vector<m3d::EditableFaceId> selected;
+    for (const auto& face : mesh.faces()) selected.push_back(face.id);
+    const auto before = mesh.snapshot();
+    std::string error;
+    REQUIRE(!mesh.deleteFaces(selected, &error));
+    REQUIRE(!error.empty());
+    REQUIRE(mesh.snapshot().vertices == before.vertices);
+    REQUIRE(mesh.snapshot().halfEdges == before.halfEdges);
+    REQUIRE(mesh.snapshot().edges == before.edges);
+    REQUIRE(mesh.snapshot().faces == before.faces);
+}

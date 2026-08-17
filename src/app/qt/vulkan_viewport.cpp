@@ -481,6 +481,12 @@ void VulkanViewport::keyPressEvent(QKeyEvent* event) {
         event->accept();
         return;
     }
+    if (controller_ && controller_->editMode() &&
+        (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace)) {
+        (void)controller_->deleteSelectedMeshElements();
+        event->accept();
+        return;
+    }
     QQuickItem::keyPressEvent(event);
 }
 

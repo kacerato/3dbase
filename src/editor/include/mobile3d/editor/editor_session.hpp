@@ -99,6 +99,7 @@ public:
     [[nodiscard]] bool fillSelectedMeshBoundary(std::string* error = nullptr);
     [[nodiscard]] bool bridgeSelectedMeshBoundaries(std::string* error = nullptr);
     [[nodiscard]] bool loopCutSelectedMeshEdge(std::string* error = nullptr);
+    [[nodiscard]] bool deleteSelectedMeshElements(std::string* error = nullptr);
 
     [[nodiscard]] bool select(ObjectId object,
                               SelectionMode mode = SelectionMode::Replace);

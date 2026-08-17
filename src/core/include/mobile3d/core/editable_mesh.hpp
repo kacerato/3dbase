@@ -118,6 +118,12 @@ public:
         std::span<const EditableEdgeId> edges, std::string* error = nullptr);
     [[nodiscard]] std::optional<EditableLoopCutResult> loopCut(
         EditableEdgeId edge, std::string* error = nullptr);
+    [[nodiscard]] bool deleteFaces(std::span<const EditableFaceId> faces,
+                                   std::string* error = nullptr);
+    [[nodiscard]] bool deleteEdges(std::span<const EditableEdgeId> edges,
+                                   std::string* error = nullptr);
+    [[nodiscard]] bool deleteVertices(std::span<const EditableVertexId> vertices,
+                                      std::string* error = nullptr);
 
     [[nodiscard]] std::size_t vertexCount() const noexcept { return vertexCount_; }
     [[nodiscard]] std::size_t halfEdgeCount() const noexcept { return halfEdgeCount_; }

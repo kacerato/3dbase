@@ -837,4 +837,141 @@ std::optional<EditableLoopCutResult> EditableMesh::loopCut(
     return result;
 }
 
+
+bool EditableMesh::deleteFaces(std::span<const EditableFaceId> facesToDelete,
+                               std::string* error) {
+    std::set<EditableFaceId> unique(facesToDelete.begin(), facesToDelete.end());
+    if (unique.empty()) {
+        if (error) *error = "Delete Faces requires at least one selected face";
+        return false;
+    }
+    for (const auto face : unique) {
+        if (!findFace(face)) {
+            if (error) *error = "Delete Faces selection contains a missing face";
+            return false;
+        }
+    }
+    if (unique.size() >= faceCount_) {
+        if (error) *error = "Delete Faces cannot remove the last editable face";
+        return false;
+    }
+
+    EditableMesh working = *this;
+    for (const auto face : unique) {
+        if (!working.removeFace(face, error)) return false;
+    }
+    if (!working.validate(error)) return false;
+    *this = std::move(working);
+    if (error) error->clear();
+    return true;
+}
+
+bool EditableMesh::deleteEdges(std::span<const EditableEdgeId> edgesToDelete,
+                               std::string* error) {
+    std::set<EditableEdgeId> unique(edgesToDelete.begin(), edgesToDelete.end());
+    if (unique.empty()) {
+        if (error) *error = "Delete Edges requires at least one selected edge";
+        return false;
+    }
+
+    std::set<EditableFaceId> incidentFaces;
+    for (const auto edgeId : unique) {
+        const auto* edge = findEdge(edgeId);
+        const auto* halfEdge = edge ? findHalfEdge(edge->halfEdge) : nullptr;
+        if (!edge || !halfEdge) {
+            if (error) *error = "Delete Edges selection contains a missing edge";
+            return false;
+        }
+        incidentFaces.insert(halfEdge->face);
+        if (!halfEdge->twin.isNull()) {
+            const auto* twin = findHalfEdge(halfEdge->twin);
+            if (!twin) {
+                if (error) *error = "Delete Edges encountered an invalid twin";
+                return false;
+            }
+            incidentFaces.insert(twin->face);
+        }
+    }
+    if (incidentFaces.empty()) {
+        if (error) *error = "Delete Edges found no incident editable faces";
+        return false;
+    }
+    if (incidentFaces.size() >= faceCount_) {
+        if (error) *error = "Delete Edges cannot remove the last editable face";
+        return false;
+    }
+
+    EditableMesh working = *this;
+    for (const auto face : incidentFaces) {
+        if (working.findFace(face) && !working.removeFace(face, error)) return false;
+    }
+    if (!working.validate(error)) return false;
+    *this = std::move(working);
+    if (error) error->clear();
+    return true;
+}
+
+bool EditableMesh::deleteVertices(std::span<const EditableVertexId> verticesToDelete,
+                                  std::string* error) {
+    std::set<EditableVertexId> unique(verticesToDelete.begin(), verticesToDelete.end());
+    if (unique.empty()) {
+        if (error) *error = "Delete Vertices requires at least one selected vertex";
+        return false;
+    }
+    for (const auto vertex : unique) {
+        if (!findVertex(vertex)) {
+            if (error) *error = "Delete Vertices selection contains a missing vertex";
+            return false;
+        }
+    }
+    if (unique.size() >= vertexCount_) {
+        if (error) *error = "Delete Vertices cannot remove every editable vertex";
+        return false;
+    }
+
+    std::set<EditableFaceId> incidentFaces;
+    for (const auto& face : faces()) {
+        const auto loop = faceVertices(face.id);
+        if (std::any_of(loop.cbegin(), loop.cend(), [&unique](EditableVertexId vertex) {
+                return unique.contains(vertex);
+            })) {
+            incidentFaces.insert(face.id);
+        }
+    }
+    if (incidentFaces.size() >= faceCount_) {
+        if (error) *error = "Delete Vertices cannot remove the last editable face";
+        return false;
+    }
+
+    EditableMesh working = *this;
+    for (const auto face : incidentFaces) {
+        if (working.findFace(face) && !working.removeFace(face, error)) return false;
+    }
+
+    for (const auto vertexId : unique) {
+        for (const auto& halfEdge : working.halfEdges()) {
+            if (halfEdge.origin == vertexId || working.destination(halfEdge.id) == vertexId) {
+                if (error) *error = "Delete Vertices left a selected vertex referenced by topology";
+                return false;
+            }
+        }
+        if (vertexId.isNull() || static_cast<std::size_t>(vertexId.value) > working.vertices_.size()) {
+            if (error) *error = "Delete Vertices encountered an invalid vertex slot";
+            return false;
+        }
+        auto& slot = working.vertices_[static_cast<std::size_t>(vertexId.value - 1U)];
+        if (!slot) {
+            if (error) *error = "Delete Vertices encountered an empty vertex slot";
+            return false;
+        }
+        slot.reset();
+        --working.vertexCount_;
+    }
+
+    if (!working.validate(error)) return false;
+    *this = std::move(working);
+    if (error) error->clear();
+    return true;
+}
+
 } // namespace m3d

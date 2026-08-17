@@ -248,4 +248,38 @@ bool EditorSession::loopCutSelectedMeshEdge(std::string* error) {
     return true;
 }
 
+
+bool EditorSession::deleteSelectedMeshElements(std::string* error) {
+    if (!meshEditTransaction_) {
+        if (error) *error = "Edit Mode is not active";
+        return false;
+    }
+    auto& selection = meshEditTransaction_->selection;
+    if (selection.emptyCurrentMode()) {
+        if (error) *error = "Delete requires selected mesh elements";
+        return false;
+    }
+
+    EditableMesh candidate = meshEditTransaction_->working;
+    bool deleted = false;
+    switch (selection.mode()) {
+    case MeshSelectionMode::Vertex:
+        deleted = candidate.deleteVertices(selection.selectedVertices(), error);
+        break;
+    case MeshSelectionMode::Edge:
+        deleted = candidate.deleteEdges(selection.selectedEdges(), error);
+        break;
+    case MeshSelectionMode::Face:
+        deleted = candidate.deleteFaces(selection.selectedFaces(), error);
+        break;
+    }
+    if (!deleted || !applyMeshEditPreview(candidate, error)) return false;
+
+    selection.clear();
+    ++selectionRevision_;
+    ++uiRevision_;
+    if (error) error->clear();
+    return true;
+}
+
 } // namespace m3d
