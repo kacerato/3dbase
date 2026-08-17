@@ -2,7 +2,7 @@ name: Apply Stage 5 Component Picking
 on:
   push:
     branches: [main]
-    paths: ['.automation/stage5_component_picker_core.py', '.automation/stage5_component_picker_qt.py']
+    paths: ['.automation/stage5_component_picker_*']
 permissions:
   contents: write
 jobs:
@@ -15,6 +15,13 @@ jobs:
         run: python3 .automation/stage5_component_picker_core.py
       - name: Apply Qt viewport integration
         run: python3 .automation/stage5_component_picker_qt.py
+      - name: Normalize generated text files
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          for path in [Path('tests/test_mesh_edit_transaction.cpp')]:
+              path.write_text(path.read_text().rstrip() + '\n')
+          PY
       - name: Install Vulkan host development runtime
         run: sudo apt-get update && sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers
       - name: Install Qt 6.8 and Shader Tools
