@@ -207,6 +207,27 @@ Rectangle {
                      && root.controller.selectedMeshElementCount === 1
             onClicked: root.controller.loopCutSelectedEdge(loopCutCount.value)
         }
+        SpinBox {
+            id: bevelWidth
+            height: 38
+            width: 86
+            visible: root.controller.editMode && root.controller.meshSelectionMode === "Edge"
+            from: 1
+            to: 100
+            value: 10
+            editable: false
+            textFromValue: function(value, locale) {
+                return (value / 100.0).toFixed(2)
+            }
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
+            text: "Bevel " + (bevelWidth.value / 100.0).toFixed(2)
+            enabled: root.controller.meshSelectionMode === "Edge"
+                     && root.controller.selectedMeshElementCount === 1
+            onClicked: root.controller.bevelSelectedEdge(bevelWidth.value / 100.0)
+        }
         Button {
             height: 38
             visible: root.controller.editMode

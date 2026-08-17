@@ -77,6 +77,11 @@ struct EditableLoopCutResult final {
     std::vector<EditableFaceId> faces;
 };
 
+struct EditableBevelResult final {
+    EditableFaceId bevelFace{};
+    std::array<EditableVertexId, 4> vertices{};
+};
+
 class EditableMesh final {
 public:
     EditableMesh() = default;
@@ -125,6 +130,8 @@ public:
         EditableEdgeId edge, std::string* error = nullptr);
     [[nodiscard]] std::optional<EditableLoopCutResult> loopCut(
         EditableEdgeId edge, std::uint32_t cuts, std::string* error = nullptr);
+    [[nodiscard]] std::optional<EditableBevelResult> bevelEdge(
+        EditableEdgeId edge, float width, std::string* error = nullptr);
     [[nodiscard]] bool deleteFaces(std::span<const EditableFaceId> faces,
                                    std::string* error = nullptr);
     [[nodiscard]] bool deleteEdges(std::span<const EditableEdgeId> edges,

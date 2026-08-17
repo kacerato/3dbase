@@ -839,6 +839,18 @@ bool EditorController::deleteSelectedMeshElements() {
     return true;
 }
 
+bool EditorController::bevelSelectedEdge(double width) {
+    std::string error;
+    if (!session_.bevelSelectedMeshEdge(static_cast<float>(width), &error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    setStatus(QStringLiteral("Single manifold edge beveled. Chains and segments remain pending."));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
 bool EditorController::flipSelectedNormals() {
     std::string error;
     if (!session_.flipSelectedMeshNormalComponents(&error)) {

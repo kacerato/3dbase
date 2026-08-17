@@ -168,6 +168,7 @@ public:
     Q_INVOKABLE bool bridgeSelectedBoundaries();
     Q_INVOKABLE bool loopCutSelectedEdge(int cuts = 1);
     Q_INVOKABLE bool deleteSelectedMeshElements();
+    Q_INVOKABLE bool bevelSelectedEdge(double width);
     Q_INVOKABLE bool flipSelectedNormals();
     Q_INVOKABLE bool recalculateNormalsOutside();
 

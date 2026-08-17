@@ -644,3 +644,59 @@ TEST_CASE("grid fill span and offset validation is atomic") {
     REQUIRE(mesh.snapshot().edges==before.edges);
     REQUIRE(mesh.snapshot().faces==before.faces);
 }
+
+TEST_CASE("single edge bevel creates a valid chamfer on valence three manifold topology") {
+    auto mesh = m3d::EditableMesh::makeCube(2.0F);
+    const auto edge = mesh.edges().front().id;
+    std::string error;
+    const auto result = mesh.bevelEdge(edge, 0.2F, &error);
+    REQUIRE(result.has_value());
+    REQUIRE(error.empty());
+    REQUIRE(mesh.validate(&error));
+    REQUIRE(mesh.vertexCount() == 10U);
+    REQUIRE(mesh.edgeCount() == 15U);
+    REQUIRE(mesh.halfEdgeCount() == 30U);
+    REQUIRE(mesh.faceCount() == 7U);
+    REQUIRE(mesh.findFace(result->bevelFace) != nullptr);
+    REQUIRE(mesh.faceVertices(result->bevelFace).size() == 4U);
+    for (const auto vertex : result->vertices) REQUIRE(mesh.findVertex(vertex) != nullptr);
+
+    m3d::MeshResource render;
+    render.id = m3d::ResourceId::generate();
+    render.name = "Beveled Cube";
+    render.authoring = mesh;
+    REQUIRE(render.rebuildFromAuthoring(&error));
+    REQUIRE(render.validate(&error));
+}
+
+TEST_CASE("single edge bevel rejects excessive width atomically") {
+    auto mesh = m3d::EditableMesh::makeCube(2.0F);
+    const auto edge = mesh.edges().front().id;
+    const auto before = mesh.snapshot();
+    std::string error;
+    REQUIRE(!mesh.bevelEdge(edge, 1.0F, &error).has_value());
+    REQUIRE(!error.empty());
+    REQUIRE(mesh.snapshot().vertices == before.vertices);
+    REQUIRE(mesh.snapshot().halfEdges == before.halfEdges);
+    REQUIRE(mesh.snapshot().edges == before.edges);
+    REQUIRE(mesh.snapshot().faces == before.faces);
+}
+
+TEST_CASE("single edge bevel rejects boundary topology until boundary bevel policy exists") {
+    auto mesh = m3d::EditableMesh::makeCube();
+    std::string error;
+    REQUIRE(mesh.deleteFaces(std::array<m3d::EditableFaceId,1>{mesh.faces().front().id},&error));
+    m3d::EditableEdgeId boundary{};
+    for (const auto& candidate:mesh.edges()) {
+        const auto* halfEdge=mesh.findHalfEdge(candidate.halfEdge);
+        if (halfEdge && halfEdge->twin.isNull()) { boundary=candidate.id; break; }
+    }
+    REQUIRE(!boundary.isNull());
+    const auto before=mesh.snapshot();
+    REQUIRE(!mesh.bevelEdge(boundary,0.1F,&error).has_value());
+    REQUIRE(!error.empty());
+    REQUIRE(mesh.snapshot().vertices==before.vertices);
+    REQUIRE(mesh.snapshot().halfEdges==before.halfEdges);
+    REQUIRE(mesh.snapshot().edges==before.edges);
+    REQUIRE(mesh.snapshot().faces==before.faces);
+}

@@ -403,4 +403,35 @@ bool EditorSession::gridFillSelectedMeshBoundary(std::uint32_t span, std::uint32
     return true;
 }
 
+
+bool EditorSession::bevelSelectedMeshEdge(float width, std::string* error) {
+    if (!meshEditTransaction_) {
+        if (error) *error = "Edit Mode is not active";
+        return false;
+    }
+    auto& selection = meshEditTransaction_->selection;
+    if (selection.mode() != MeshSelectionMode::Edge) {
+        if (error) *error = "Bevel requires Edge selection mode";
+        return false;
+    }
+    const auto selected = selection.selectedEdges();
+    if (selected.size() != 1U) {
+        if (error) *error = "Current Bevel baseline requires exactly one selected edge";
+        return false;
+    }
+
+    EditableMesh candidate = meshEditTransaction_->working;
+    const auto result = candidate.bevelEdge(selected.front(), width, error);
+    if (!result || !applyMeshEditPreview(candidate, error)) return false;
+
+    selection.clear();
+    selection.setMode(MeshSelectionMode::Face);
+    (void)selection.select(meshEditTransaction_->working, result->bevelFace,
+                           MeshSelectionAction::Replace);
+    ++selectionRevision_;
+    ++uiRevision_;
+    if (error) error->clear();
+    return true;
+}
+
 } // namespace m3d

@@ -632,3 +632,54 @@ TEST_CASE("edit mode grid fill builds a structured quad patch and remains one un
     REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->vertexCount()==22U);
     REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->faceCount()==17U);
 }
+
+TEST_CASE("edit mode single edge bevel previews and commits through one undo") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Edge));
+    const auto edge = session.editableMesh()->edges().front().id;
+    REQUIRE(session.selectMeshEdge(edge));
+    REQUIRE(session.bevelSelectedMeshEdge(0.1F, &error));
+    REQUIRE(error.empty());
+    REQUIRE(session.editableMesh()->vertexCount() == 10U);
+    REQUIRE(session.editableMesh()->edgeCount() == 15U);
+    REQUIRE(session.editableMesh()->faceCount() == 7U);
+    REQUIRE(session.meshSelection()->mode() == m3d::MeshSelectionMode::Face);
+    REQUIRE(session.meshSelection()->selectedFaces().size() == 1U);
+
+    REQUIRE(session.commitMeshEdit("Bevel Edge", &error));
+    REQUIRE(session.nextUndoName() == "Bevel Edge");
+    REQUIRE(session.undo());
+    const auto resource = *session.scene()->find(*object)->meshResource;
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->vertexCount() == 8U);
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 6U);
+    REQUIRE(session.redo());
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->vertexCount() == 10U);
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 7U);
+}
+
+TEST_CASE("edit mode bevel failure leaves working mesh and selection unchanged") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Edge));
+    const auto edge = session.editableMesh()->edges().front().id;
+    REQUIRE(session.selectMeshEdge(edge));
+    const auto before = session.editableMesh()->snapshot();
+    REQUIRE(!session.bevelSelectedMeshEdge(1.0F, &error));
+    REQUIRE(!error.empty());
+    REQUIRE(session.editableMesh()->snapshot().vertices == before.vertices);
+    REQUIRE(session.editableMesh()->snapshot().halfEdges == before.halfEdges);
+    REQUIRE(session.editableMesh()->snapshot().edges == before.edges);
+    REQUIRE(session.editableMesh()->snapshot().faces == before.faces);
+    REQUIRE(session.meshSelection()->selectedEdges().size() == 1U);
+    REQUIRE(!session.isDirty());
+    REQUIRE(session.cancelMeshEdit());
+}
