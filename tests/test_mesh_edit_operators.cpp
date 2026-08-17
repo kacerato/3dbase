@@ -511,3 +511,57 @@ TEST_CASE("recalculate outside on open mesh is a clean no-op") {
     REQUIRE(!session.isDirty());
     REQUIRE(session.cancelMeshEdit());
 }
+
+TEST_CASE("edit mode bridge adapts triangle and quad boundary loops in one transaction") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    REQUIRE(session.createProject(path, "Adaptive Bridge", &error));
+
+    m3d::EditableMesh authored;
+    const std::array<m3d::EditableVertexId,3> triangle{
+        authored.addVertex({0.0F,-1.2F,0.0F}), authored.addVertex({1.1F,0.8F,0.0F}),
+        authored.addVertex({-1.1F,0.8F,0.0F})
+    };
+    const std::array<m3d::EditableVertexId,4> quad{
+        authored.addVertex({-1.2F,-1.2F,2.0F}), authored.addVertex({1.2F,-1.2F,2.0F}),
+        authored.addVertex({1.2F,1.2F,2.0F}), authored.addVertex({-1.2F,1.2F,2.0F})
+    };
+    const std::array<m3d::EditableVertexId,3> triangleWinding{triangle[0],triangle[2],triangle[1]};
+    REQUIRE(authored.addFace(triangleWinding,&error).has_value());
+    REQUIRE(authored.addFace(quad,&error).has_value());
+
+    m3d::MeshResource resource;
+    resource.id = m3d::ResourceId::generate();
+    resource.name = "Triangle Quad Loops";
+    resource.authoring = authored;
+    REQUIRE(resource.rebuildFromAuthoring(&error));
+    const auto object = session.createMeshObject(std::move(resource), "Triangle Quad Loops");
+    REQUIRE(object.has_value());
+    REQUIRE(session.saveProject(&error));
+    REQUIRE(session.beginMeshEdit(*object,&error));
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Edge));
+
+    bool first = true;
+    for (const auto& edge : session.editableMesh()->edges()) {
+        REQUIRE(session.selectMeshEdge(edge.id, first ? m3d::MeshSelectionAction::Replace
+                                                      : m3d::MeshSelectionAction::Add));
+        first = false;
+    }
+    REQUIRE(session.meshSelection()->selectedEdges().size() == 7U);
+    REQUIRE(session.bridgeSelectedMeshBoundaries(&error));
+    REQUIRE(error.empty());
+    REQUIRE(session.editableMesh()->faceCount() == 8U);
+    REQUIRE(session.editableMesh()->edgeCount() == 13U);
+    REQUIRE(session.meshSelection()->mode() == m3d::MeshSelectionMode::Face);
+    REQUIRE(session.meshSelection()->selectedFaces().size() == 6U);
+
+    REQUIRE(session.commitMeshEdit("Bridge Loops", &error));
+    REQUIRE(session.nextUndoName() == "Bridge Loops");
+    REQUIRE(session.undo());
+    const auto resourceId = *session.scene()->find(*object)->meshResource;
+    REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->faceCount() == 2U);
+    REQUIRE(session.redo());
+    REQUIRE(session.scene()->findMeshResource(resourceId)->authoring->faceCount() == 8U);
+}

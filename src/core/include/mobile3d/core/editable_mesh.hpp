@@ -116,6 +116,8 @@ public:
         std::span<const EditableEdgeId> edges, std::string* error = nullptr);
     [[nodiscard]] std::optional<std::vector<EditableFaceId>> bridgeBoundaryLoops(
         std::span<const EditableEdgeId> edges, std::string* error = nullptr);
+    [[nodiscard]] std::optional<std::vector<EditableFaceId>> bridgeBoundaryLoopsAdaptive(
+        std::span<const EditableEdgeId> edges, std::string* error = nullptr);
     [[nodiscard]] std::optional<EditableLoopCutResult> loopCut(
         EditableEdgeId edge, std::string* error = nullptr);
     [[nodiscard]] std::optional<EditableLoopCutResult> loopCut(

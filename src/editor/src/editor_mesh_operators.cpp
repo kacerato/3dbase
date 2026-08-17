@@ -196,7 +196,7 @@ bool EditorSession::bridgeSelectedMeshBoundaries(std::string* error) {
     }
 
     EditableMesh candidate = meshEditTransaction_->working;
-    const auto faces = candidate.bridgeBoundaryLoops(selected, error);
+    const auto faces = candidate.bridgeBoundaryLoopsAdaptive(selected, error);
     if (!faces || faces->empty() || !applyMeshEditPreview(candidate, error)) return false;
 
     selection.clear();

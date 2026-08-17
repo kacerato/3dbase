@@ -522,3 +522,56 @@ TEST_CASE("recalculate outside leaves open components unchanged") {
     REQUIRE(mesh.snapshot().edges == before.edges);
     REQUIRE(mesh.snapshot().faces == before.faces);
 }
+
+TEST_CASE("adaptive bridge closes triangle to quad boundary loops") {
+    m3d::EditableMesh mesh;
+    const std::array<m3d::EditableVertexId,3> triangle{
+        mesh.addVertex({0.0F,-1.2F,0.0F}), mesh.addVertex({1.1F,0.8F,0.0F}),
+        mesh.addVertex({-1.1F,0.8F,0.0F})
+    };
+    const std::array<m3d::EditableVertexId,4> quad{
+        mesh.addVertex({-1.2F,-1.2F,2.0F}), mesh.addVertex({1.2F,-1.2F,2.0F}),
+        mesh.addVertex({1.2F,1.2F,2.0F}), mesh.addVertex({-1.2F,1.2F,2.0F})
+    };
+    const std::array<m3d::EditableVertexId,3> triangleWinding{triangle[0],triangle[2],triangle[1]};
+    std::string error;
+    REQUIRE(mesh.addFace(triangleWinding,&error).has_value());
+    REQUIRE(mesh.addFace(quad,&error).has_value());
+    std::vector<m3d::EditableEdgeId> boundaries;
+    for (const auto& edge : mesh.edges()) boundaries.push_back(edge.id);
+    REQUIRE(boundaries.size() == 7U);
+
+    const auto bridge = mesh.bridgeBoundaryLoopsAdaptive(boundaries,&error);
+    REQUIRE(bridge.has_value());
+    REQUIRE(bridge->size() == 6U);
+    REQUIRE(error.empty());
+    REQUIRE(mesh.validate(&error));
+    REQUIRE(mesh.vertexCount() == 7U);
+    REQUIRE(mesh.edgeCount() == 13U);
+    REQUIRE(mesh.halfEdgeCount() == 26U);
+    REQUIRE(mesh.faceCount() == 8U);
+    for (const auto& edge : mesh.edges()) {
+        const auto* halfEdge = mesh.findHalfEdge(edge.halfEdge);
+        REQUIRE(halfEdge != nullptr);
+        REQUIRE(!halfEdge->twin.isNull());
+    }
+}
+
+TEST_CASE("adaptive bridge retains quad band for equal loop counts") {
+    m3d::EditableMesh mesh;
+    const std::array<m3d::EditableVertexId,4> bottom{
+        mesh.addVertex({-1,-1,0}),mesh.addVertex({1,-1,0}),mesh.addVertex({1,1,0}),mesh.addVertex({-1,1,0})};
+    const std::array<m3d::EditableVertexId,4> top{
+        mesh.addVertex({-1,-1,2}),mesh.addVertex({1,-1,2}),mesh.addVertex({1,1,2}),mesh.addVertex({-1,1,2})};
+    const std::array<m3d::EditableVertexId,4> bottomWinding{bottom[0],bottom[3],bottom[2],bottom[1]};
+    std::string error;
+    REQUIRE(mesh.addFace(bottomWinding,&error).has_value());
+    REQUIRE(mesh.addFace(top,&error).has_value());
+    std::vector<m3d::EditableEdgeId> boundaries;
+    for(const auto& edge:mesh.edges()) boundaries.push_back(edge.id);
+    const auto bridge=mesh.bridgeBoundaryLoopsAdaptive(boundaries,&error);
+    REQUIRE(bridge.has_value());
+    REQUIRE(bridge->size()==4U);
+    for(const auto faceId:*bridge) REQUIRE(mesh.faceVertices(faceId).size()==4U);
+    REQUIRE(mesh.validate(&error));
+}
