@@ -116,6 +116,10 @@ struct PickTarget final {
     return {value.x * scale, value.y * scale, value.z * scale};
 }
 
+[[nodiscard]] m3d::Vec3 subtractVector(m3d::Vec3 left, m3d::Vec3 right) noexcept {
+    return {left.x - right.x, left.y - right.y, left.z - right.z};
+}
+
 [[nodiscard]] std::array<float, 4> gizmoAxisColor(
     m3d::TransformConstraint axis,
     const std::optional<m3d::TransformConstraint>& active) noexcept {
@@ -258,6 +262,72 @@ void appendRotationRing(std::vector<LineVertex>& vertices,
     appendGizmoLine(vertices, addVector(gizmo.pivotWorld, scaleVector(z, -centerSize)),
                     addVector(gizmo.pivotWorld, scaleVector(z, centerSize)), centerColor);
     return vertices;
+}
+
+[[nodiscard]] std::uint64_t topologyEdgeKey(std::uint32_t first, std::uint32_t second) noexcept {
+    const auto low = std::min(first, second);
+    const auto high = std::max(first, second);
+    return (static_cast<std::uint64_t>(low) << 32U) | static_cast<std::uint64_t>(high);
+}
+
+[[nodiscard]] std::vector<LineVertex> makeEditMeshVertices(
+    const m3d::MeshEditPresentationSnapshot& editMesh) {
+    std::vector<LineVertex> output;
+    if (!editMesh.active() || editMesh.vertices.empty()) return output;
+
+    std::unordered_map<std::uint32_t, m3d::Vec3> positions;
+    positions.reserve(editMesh.vertices.size());
+    m3d::Vec3 minimum = editMesh.vertices.front().position;
+    m3d::Vec3 maximum = minimum;
+    for (const auto& vertex : editMesh.vertices) {
+        positions.emplace(vertex.id.value, vertex.position);
+        minimum.x = std::min(minimum.x, vertex.position.x);
+        minimum.y = std::min(minimum.y, vertex.position.y);
+        minimum.z = std::min(minimum.z, vertex.position.z);
+        maximum.x = std::max(maximum.x, vertex.position.x);
+        maximum.y = std::max(maximum.y, vertex.position.y);
+        maximum.z = std::max(maximum.z, vertex.position.z);
+    }
+
+    std::unordered_set<std::uint64_t> selectedFaceEdges;
+    for (const auto& face : editMesh.faces) {
+        if (!face.selected || face.vertices.size() < 2U) continue;
+        for (std::size_t index = 0; index < face.vertices.size(); ++index) {
+            const auto first = face.vertices[index].value;
+            const auto second = face.vertices[(index + 1U) % face.vertices.size()].value;
+            selectedFaceEdges.insert(topologyEdgeKey(first, second));
+        }
+    }
+
+    constexpr std::array<float, 4> regularEdge{0.64F, 0.69F, 0.76F, 1.0F};
+    constexpr std::array<float, 4> selectedElement{1.0F, 0.50F, 0.08F, 1.0F};
+    output.reserve(editMesh.edges.size() * 2U + editMesh.vertices.size() * 6U);
+    for (const auto& edge : editMesh.edges) {
+        const auto first = positions.find(edge.first.value);
+        const auto second = positions.find(edge.second.value);
+        if (first == positions.end() || second == positions.end()) continue;
+        const bool selected = edge.selected ||
+            selectedFaceEdges.contains(topologyEdgeKey(edge.first.value, edge.second.value));
+        appendGizmoLine(output, first->second, second->second,
+                        selected ? selectedElement : regularEdge);
+    }
+
+    if (editMesh.mode == m3d::MeshSelectionMode::Vertex) {
+        const float spanX = maximum.x - minimum.x;
+        const float spanY = maximum.y - minimum.y;
+        const float spanZ = maximum.z - minimum.z;
+        const float marker = std::max(0.006F, std::max({spanX, spanY, spanZ, 0.1F}) * 0.018F);
+        const m3d::Vec3 x{marker, 0.0F, 0.0F};
+        const m3d::Vec3 y{0.0F, marker, 0.0F};
+        const m3d::Vec3 z{0.0F, 0.0F, marker};
+        for (const auto& vertex : editMesh.vertices) {
+            const auto color = vertex.selected ? selectedElement : regularEdge;
+            appendGizmoLine(output, subtractVector(vertex.position, x), addVector(vertex.position, x), color);
+            appendGizmoLine(output, subtractVector(vertex.position, y), addVector(vertex.position, y), color);
+            appendGizmoLine(output, subtractVector(vertex.position, z), addVector(vertex.position, z), color);
+        }
+    }
+    return output;
 }
 
 [[nodiscard]] std::vector<LineVertex> makeGridVertices() {
@@ -592,6 +662,8 @@ struct VulkanViewportRenderer::Impl final {
     std::uint32_t gridVertexCount{0};
     VkPipelineLayout linePipelineLayout{VK_NULL_HANDLE};
     VkPipeline linePipeline{VK_NULL_HANDLE};
+    VkPipelineLayout editLinePipelineLayout{VK_NULL_HANDLE};
+    VkPipeline editLinePipeline{VK_NULL_HANDLE};
     VkPipelineLayout meshPipelineLayout{VK_NULL_HANDLE};
     VkPipeline meshPipeline{VK_NULL_HANDLE};
     VkPipelineLayout outlinePipelineLayout{VK_NULL_HANDLE};
@@ -608,9 +680,11 @@ VulkanViewportRenderer::VulkanViewportRenderer() : impl_(std::make_unique<Impl>(
 VulkanViewportRenderer::~VulkanViewportRenderer() = default;
 
 void VulkanViewportRenderer::synchronize(QRect viewportPixels, m3d::RenderSceneSnapshot snapshot,
+                                         m3d::MeshEditPresentationSnapshot editMesh,
                                          m3d::Mat4 viewProjection, VulkanGizmoPresentation gizmo) {
     viewportPixels_ = viewportPixels;
     snapshot_ = std::move(snapshot);
+    editMesh_ = std::move(editMesh);
     viewProjection_ = viewProjection;
     gizmo_ = std::move(gizmo);
 }
@@ -690,7 +764,8 @@ bool createPipeline(VulkanViewportRenderer::Impl& impl,
                     VkPipelineLayout& layout,
                     VkPipeline& pipeline,
                     bool depthWrite = true,
-                    VkCullModeFlags cullMode = VK_CULL_MODE_NONE) {
+                    VkCullModeFlags cullMode = VK_CULL_MODE_NONE,
+                    bool lineDepthTest = false) {
     QString error;
     const auto vertexCode = linePipeline
         ? VulkanShaderLibrary::viewportLineVertexSpirv(&error)
@@ -759,10 +834,12 @@ bool createPipeline(VulkanViewportRenderer::Impl& impl,
 
     auto assembly = vkInfo<VkPipelineInputAssemblyStateCreateInfo>(VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO);
     assembly.topology = linePipeline ? VK_PRIMITIVE_TOPOLOGY_LINE_LIST : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    PipelineCommonState common(!linePipeline, sampleCount);
+    PipelineCommonState common(!linePipeline || lineDepthTest, sampleCount);
     common.raster.cullMode = cullMode;
     if (!linePipeline) {
         common.depthStencil.depthWriteEnable = depthWrite ? VK_TRUE : VK_FALSE;
+    } else if (lineDepthTest) {
+        common.depthStencil.depthWriteEnable = VK_FALSE;
     }
 
     auto pipelineInfo = vkInfo<VkGraphicsPipelineCreateInfo>(VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO);
@@ -1120,6 +1197,8 @@ void VulkanViewportRenderer::release() {
     }
     impl.meshCache.clear();
     (void)persistPipelineCache(impl);
+    if (impl.editLinePipeline) impl.deviceFunctions->vkDestroyPipeline(impl.device, impl.editLinePipeline, nullptr);
+    if (impl.editLinePipelineLayout) impl.deviceFunctions->vkDestroyPipelineLayout(impl.device, impl.editLinePipelineLayout, nullptr);
     if (impl.outlinePipeline) impl.deviceFunctions->vkDestroyPipeline(impl.device, impl.outlinePipeline, nullptr);
     if (impl.outlinePipelineLayout) impl.deviceFunctions->vkDestroyPipelineLayout(impl.device, impl.outlinePipelineLayout, nullptr);
     if (impl.meshPipeline) impl.deviceFunctions->vkDestroyPipeline(impl.device, impl.meshPipeline, nullptr);
@@ -1344,6 +1423,9 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
         if (!createPipelineCache(impl) || !createGridResources(impl) ||
             !createPipeline(impl, impl.renderPass, vulkanSampleCount(impl.sampleCount), true,
                             impl.linePipelineLayout, impl.linePipeline) ||
+            !createPipeline(impl, impl.renderPass, vulkanSampleCount(impl.sampleCount), true,
+                            impl.editLinePipelineLayout, impl.editLinePipeline, false,
+                            VK_CULL_MODE_NONE, true) ||
             !createPipeline(impl, impl.renderPass, vulkanSampleCount(impl.sampleCount), false,
                             impl.meshPipelineLayout, impl.meshPipeline) ||
             !createPipeline(impl, impl.renderPass, vulkanSampleCount(impl.sampleCount), false,
@@ -1424,7 +1506,7 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
     deviceFunctions->vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, impl.outlinePipeline);
     for (const auto& object : snapshot_.objects()) {
         if (!object.visible || !object.selected || object.type != m3d::ObjectType::Mesh ||
-            !object.meshResource) continue;
+            !object.meshResource || (editMesh_.active() && object.id == editMesh_.object)) continue;
         const auto mesh = impl.meshCache.find(*object.meshResource);
         const auto* geometry = snapshot_.findMesh(*object.meshResource);
         if (mesh == impl.meshCache.end() || !geometry || !geometry->bounds) continue;
@@ -1451,9 +1533,11 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
         if (mesh == impl.meshCache.end()) continue;
         const MeshPushConstants push{
             m3d::multiply(viewProjection_, object.worldTransform),
-            object.selected
-                ? std::array<float, 4>{0.93F, 0.55F, 0.18F, 1.0F}
-                : std::array<float, 4>{0.62F, 0.66F, 0.72F, 1.0F},
+            (editMesh_.active() && object.id == editMesh_.object)
+                ? std::array<float, 4>{0.48F, 0.52F, 0.58F, 1.0F}
+                : object.selected
+                    ? std::array<float, 4>{0.93F, 0.55F, 0.18F, 1.0F}
+                    : std::array<float, 4>{0.62F, 0.66F, 0.72F, 1.0F},
         };
         deviceFunctions->vkCmdPushConstants(commandBuffer, impl.meshPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
                                             0, static_cast<std::uint32_t>(sizeof(push)), &push);
@@ -1461,6 +1545,38 @@ VulkanRecordStats VulkanViewportRenderer::record(QQuickWindow* window) {
         deviceFunctions->vkCmdBindIndexBuffer(commandBuffer, mesh->second.index.buffer, 0, VK_INDEX_TYPE_UINT32);
         deviceFunctions->vkCmdDrawIndexed(commandBuffer, mesh->second.indexCount, 1, 0, 0, 0);
         ++stats.meshDraws;
+    }
+
+    if (editMesh_.active()) {
+        const auto* editObject = snapshot_.find(editMesh_.object);
+        const auto overlayVertices = makeEditMeshVertices(editMesh_);
+        if (editObject && editObject->visible && !overlayVertices.empty()) {
+            const auto stateInfo = window->graphicsStateInfo();
+            ensureFrameGarbage(impl, stateInfo.framesInFlight);
+            auto* garbage = frameGarbageFor(impl, stateInfo.currentFrameSlot);
+            GpuBuffer overlayBuffer;
+            if (garbage && createHostBuffer(impl.functions, impl.deviceFunctions,
+                                            impl.physicalDevice, impl.device,
+                                            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                            overlayVertices.data(),
+                                            static_cast<VkDeviceSize>(overlayVertices.size() * sizeof(LineVertex)),
+                                            overlayBuffer)) {
+                garbage->stagingBuffers.push_back(overlayBuffer);
+                const m3d::Mat4 editMvp = m3d::multiply(viewProjection_, editObject->worldTransform);
+                deviceFunctions->vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                   impl.editLinePipeline);
+                deviceFunctions->vkCmdBindVertexBuffers(commandBuffer, 0, 1,
+                                                        &overlayBuffer.buffer, &zeroOffset);
+                deviceFunctions->vkCmdPushConstants(commandBuffer, impl.editLinePipelineLayout,
+                                                    VK_SHADER_STAGE_VERTEX_BIT, 0,
+                                                    static_cast<std::uint32_t>(sizeof(m3d::Mat4)),
+                                                    editMvp.values.data());
+                deviceFunctions->vkCmdDraw(commandBuffer,
+                                           static_cast<std::uint32_t>(overlayVertices.size()),
+                                           1, 0, 0);
+                ++stats.editOverlayDraws;
+            }
+        }
     }
 
     const auto gizmoVertices = makeGizmoVertices(gizmo_);

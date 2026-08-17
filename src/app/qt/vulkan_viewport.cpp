@@ -132,7 +132,7 @@ QString graphicsApiName(QSGRendererInterface::GraphicsApi api) {
     const EditorController* controller,
     std::optional<m3d::TransformConstraint> activeConstraint = std::nullopt) {
     VulkanGizmoPresentation presentation;
-    if (!controller) return presentation;
+    if (!controller || controller->editMode()) return presentation;
 
     const auto* active = activeSelectedObject(snapshot);
     if (!active) return presentation;
@@ -619,7 +619,11 @@ void VulkanViewport::sync() {
     const int pixelHeight = std::max(0, bottom - top);
 
     m3d::RenderSceneSnapshot snapshot;
-    if (controller_) snapshot = controller_->renderSnapshot();
+    m3d::MeshEditPresentationSnapshot editMesh;
+    if (controller_) {
+        snapshot = controller_->renderSnapshot();
+        editMesh = controller_->meshEditSnapshot();
+    }
     const float aspect = pixelHeight > 0
         ? static_cast<float>(pixelWidth) / static_cast<float>(pixelHeight) : 1.0F;
     const m3d::Mat4 viewProjection = camera_.viewProjectionMatrix(aspect);
@@ -629,7 +633,7 @@ void VulkanViewport::sync() {
                               : std::nullopt);
     if (gizmo.visible) gizmo.worldSize = worldUnitsPerPixelAt(gizmo.pivotWorld) * kGizmoPixelSize;
     renderer_->synchronize(QRect(left, top, pixelWidth, pixelHeight), std::move(snapshot),
-                           viewProjection, gizmo);
+                           std::move(editMesh), viewProjection, gizmo);
 
     if (pickRequested_ && pixelWidth > 0 && pixelHeight > 0) {
         const int x = std::clamp(
@@ -680,6 +684,9 @@ void VulkanViewport::recordVulkanCommands() {
     }
     if (stats.gizmoDraws > 0) {
         recordedGizmoDrawCount_.fetch_add(stats.gizmoDraws, std::memory_order_relaxed);
+    }
+    if (stats.editOverlayDraws > 0) {
+        recordedEditOverlayDrawCount_.fetch_add(stats.editOverlayDraws, std::memory_order_relaxed);
     }
     if (stats.pipelineCacheLoaded) {
         pipelineCacheLoaded_.store(true, std::memory_order_relaxed);

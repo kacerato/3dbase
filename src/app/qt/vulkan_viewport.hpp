@@ -56,6 +56,9 @@ public:
     [[nodiscard]] std::uint64_t recordedGizmoDrawCount() const noexcept {
         return recordedGizmoDrawCount_.load(std::memory_order_relaxed);
     }
+    [[nodiscard]] std::uint64_t recordedEditOverlayDrawCount() const noexcept {
+        return recordedEditOverlayDrawCount_.load(std::memory_order_relaxed);
+    }
     [[nodiscard]] bool pipelineCacheLoaded() const noexcept {
         return pipelineCacheLoaded_.load(std::memory_order_relaxed);
     }
@@ -132,6 +135,7 @@ private:
     std::atomic_uint64_t recordedMeshDrawCount_{0};
     std::atomic_uint64_t recordedOutlineDrawCount_{0};
     std::atomic_uint64_t recordedGizmoDrawCount_{0};
+    std::atomic_uint64_t recordedEditOverlayDrawCount_{0};
     std::atomic_bool pipelineCacheLoaded_{false};
     std::atomic_uint64_t completedPickCount_{0};
     std::atomic_uint64_t successfulPickCount_{0};
