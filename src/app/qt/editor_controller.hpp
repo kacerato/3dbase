@@ -157,6 +157,7 @@ public:
     Q_INVOKABLE bool cancelEditMode();
     Q_INVOKABLE bool setMeshSelectionMode(const QString& name);
     Q_INVOKABLE bool selectMeshElement(const QString& type, int id, bool toggle = false);
+    Q_INVOKABLE bool clearMeshSelection();
     Q_INVOKABLE bool extrudeSelectedFace(double distance = 0.25);
     Q_INVOKABLE bool insetSelectedFace(double ratio = 0.25);
     Q_INVOKABLE bool subdivideSelectedFace();

@@ -703,6 +703,13 @@ bool EditorController::selectMeshElement(const QString& type, int id, bool toggl
     return true;
 }
 
+bool EditorController::clearMeshSelection() {
+    if (!session_.clearMeshSelection()) return false;
+    emit editModeChanged();
+    emit selectionChanged();
+    return true;
+}
+
 bool EditorController::extrudeSelectedFace(double distance) {
     std::string error;
     if (!session_.extrudeSelectedMeshFace(static_cast<float>(distance), &error)) {

@@ -179,3 +179,11 @@ TEST_CASE("closing a project always clears an active mesh edit transaction") {
     REQUIRE(!session.hasProject());
     REQUIRE(!session.hasMeshEditTransaction());
 }
+
+TEST_CASE("mesh component selection can clear without leaving edit mode") {
+    const auto path = meshEditProjectPath(); MeshEditCleanup cleanup(path); m3d::EditorSession session; std::string error;
+    REQUIRE(session.createProject(path,"Mesh Selection Clear",&error)); const auto object=session.createObject(m3d::ObjectType::Mesh,"Cube"); REQUIRE(object.has_value());
+    REQUIRE(session.beginMeshEdit(*object,&error)); const auto vertex=session.editableMesh()->vertices().front().id; REQUIRE(session.selectMeshVertex(vertex));
+    REQUIRE(!session.meshSelection()->empty()); const auto revision=session.selectionRevision(); REQUIRE(session.clearMeshSelection());
+    REQUIRE(session.hasMeshEditTransaction()); REQUIRE(session.meshSelection()->empty()); REQUIRE(session.selectionRevision()>revision); REQUIRE(session.cancelMeshEdit());
+}

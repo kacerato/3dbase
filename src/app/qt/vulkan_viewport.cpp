@@ -3,6 +3,8 @@
 #include "editor_controller.hpp"
 #include "vulkan_viewport_renderer.hpp"
 
+#include "mobile3d/editor/mesh_screen_picker.hpp"
+
 #include <QEvent>
 #include <QKeyEvent>
 #include <QMetaObject>
@@ -19,6 +21,7 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -164,25 +167,29 @@ QString graphicsApiName(QSGRendererInterface::GraphicsApi api) {
     return presentation;
 }
 
-[[nodiscard]] std::optional<QPointF> projectWorld(const m3d::Mat4& viewProjection,
-                                                  m3d::Vec3 world,
-                                                  qreal width,
-                                                  qreal height) noexcept {
-    const float clipX = viewProjection.at(0, 0) * world.x +
-                        viewProjection.at(0, 1) * world.y +
-                        viewProjection.at(0, 2) * world.z + viewProjection.at(0, 3);
-    const float clipY = viewProjection.at(1, 0) * world.x +
-                        viewProjection.at(1, 1) * world.y +
-                        viewProjection.at(1, 2) * world.z + viewProjection.at(1, 3);
-    const float clipW = viewProjection.at(3, 0) * world.x +
-                        viewProjection.at(3, 1) * world.y +
-                        viewProjection.at(3, 2) * world.z + viewProjection.at(3, 3);
-    if (clipW <= 1.0e-5F) return std::nullopt;
-    const float ndcX = clipX / clipW;
-    const float ndcY = clipY / clipW;
-    if (!std::isfinite(ndcX) || !std::isfinite(ndcY)) return std::nullopt;
-    return QPointF((static_cast<qreal>(ndcX) * 0.5 + 0.5) * width,
-                   (static_cast<qreal>(ndcY) * 0.5 + 0.5) * height);
+struct ProjectedPoint final { QPointF screen{}; float depth{1.0F}; };
+
+[[nodiscard]] std::optional<ProjectedPoint> projectWorldWithDepth(
+    const m3d::Mat4& viewProjection, m3d::Vec3 world, qreal width, qreal height) noexcept {
+    const float clipX=viewProjection.at(0,0)*world.x+viewProjection.at(0,1)*world.y+viewProjection.at(0,2)*world.z+viewProjection.at(0,3);
+    const float clipY=viewProjection.at(1,0)*world.x+viewProjection.at(1,1)*world.y+viewProjection.at(1,2)*world.z+viewProjection.at(1,3);
+    const float clipZ=viewProjection.at(2,0)*world.x+viewProjection.at(2,1)*world.y+viewProjection.at(2,2)*world.z+viewProjection.at(2,3);
+    const float clipW=viewProjection.at(3,0)*world.x+viewProjection.at(3,1)*world.y+viewProjection.at(3,2)*world.z+viewProjection.at(3,3);
+    if (clipW<=1.0e-5F) return std::nullopt;
+    const float ndcX=clipX/clipW, ndcY=clipY/clipW, ndcZ=clipZ/clipW;
+    if(!std::isfinite(ndcX)||!std::isfinite(ndcY)||!std::isfinite(ndcZ)) return std::nullopt;
+    return ProjectedPoint{QPointF((static_cast<qreal>(ndcX)*0.5+0.5)*width,(static_cast<qreal>(ndcY)*0.5+0.5)*height),ndcZ};
+}
+
+[[nodiscard]] std::optional<QPointF> projectWorld(const m3d::Mat4& viewProjection,m3d::Vec3 world,qreal width,qreal height) noexcept {
+    const auto projected=projectWorldWithDepth(viewProjection,world,width,height);
+    return projected?std::optional<QPointF>(projected->screen):std::nullopt;
+}
+
+[[nodiscard]] m3d::Vec3 transformPoint(const m3d::Mat4& matrix,m3d::Vec3 point) noexcept {
+    return {matrix.at(0,0)*point.x+matrix.at(0,1)*point.y+matrix.at(0,2)*point.z+matrix.at(0,3),
+            matrix.at(1,0)*point.x+matrix.at(1,1)*point.y+matrix.at(1,2)*point.z+matrix.at(1,3),
+            matrix.at(2,0)*point.x+matrix.at(2,1)*point.y+matrix.at(2,2)*point.z+matrix.at(2,3)};
 }
 
 [[nodiscard]] float cross2D(QPointF a, QPointF b, QPointF c) noexcept {
@@ -429,11 +436,39 @@ void VulkanViewport::resetCamera() {
     cameraMutated();
 }
 
-void VulkanViewport::requestPickAt(double x, double y) {
-    if (transformInteraction_ || x < 0.0 || y < 0.0 || x >= width() || y >= height()) return;
-    pendingPickPosition_ = QPointF(x, y);
-    pickRequested_ = true;
-    update();
+void VulkanViewport::requestPickAt(double x,double y) { requestPickAtInternal(QPointF(x,y),false); }
+
+void VulkanViewport::requestPickAtInternal(QPointF position,bool toggle) {
+    if(transformInteraction_||position.x()<0.0||position.y()<0.0||position.x()>=width()||position.y()>=height()) return;
+    if(controller_&&controller_->editMode()){ (void)pickMeshElementAt(position,toggle); update(); return; }
+    pendingPickPosition_=position; pickRequested_=true; update();
+}
+
+bool VulkanViewport::pickMeshElementAt(QPointF position,bool toggle) {
+    if(!controller_||!controller_->editMode()||width()<=0.0||height()<=0.0) return false;
+    const auto editMesh=controller_->meshEditSnapshot(); const auto scene=controller_->renderSnapshot();
+    const auto* editObject=editMesh.active()?scene.find(editMesh.object):nullptr;
+    if(!editObject){ (void)controller_->clearMeshSelection(); return true; }
+    const float aspect=static_cast<float>(width()/std::max(height(),1.0)); const auto viewProjection=camera_.viewProjectionMatrix(aspect);
+    std::vector<m3d::MeshScreenVertex> vertices; std::vector<m3d::MeshScreenEdge> edges; std::vector<m3d::MeshScreenFace> faces;
+    std::unordered_map<std::uint32_t,m3d::MeshScreenPoint> projectedById; vertices.reserve(editMesh.vertices.size()); projectedById.reserve(editMesh.vertices.size());
+    for(const auto& vertex:editMesh.vertices){
+        const auto projected=projectWorldWithDepth(viewProjection,transformPoint(editObject->worldTransform,vertex.position),width(),height());
+        if(!projected||projected->depth<0.0F||projected->depth>1.0F) continue;
+        const m3d::MeshScreenPoint point{static_cast<float>(projected->screen.x()),static_cast<float>(projected->screen.y()),projected->depth};
+        projectedById.emplace(vertex.id.value,point); vertices.push_back({vertex.id,point});
+    }
+    edges.reserve(editMesh.edges.size());
+    for(const auto& edge:editMesh.edges){ const auto a=projectedById.find(edge.first.value),b=projectedById.find(edge.second.value); if(a!=projectedById.end()&&b!=projectedById.end()) edges.push_back({edge.id,a->second,b->second}); }
+    faces.reserve(editMesh.faces.size());
+    for(const auto& face:editMesh.faces){ m3d::MeshScreenFace projectedFace; projectedFace.id=face.id; projectedFace.vertices.reserve(face.vertices.size()); bool complete=true;
+        for(const auto vertexId:face.vertices){ const auto found=projectedById.find(vertexId.value); if(found==projectedById.end()){ complete=false; break; } projectedFace.vertices.push_back(found->second); }
+        if(complete&&projectedFace.vertices.size()>=3U) faces.push_back(std::move(projectedFace));
+    }
+    m3d::MeshScreenPickRequest request; request.mode=editMesh.mode; request.x=static_cast<float>(position.x()); request.y=static_cast<float>(position.y());
+    const auto hit=m3d::MeshScreenPicker::pick(vertices,edges,faces,request); if(!hit){ (void)controller_->clearMeshSelection(); return true; }
+    QString type; switch(hit->mode){ case m3d::MeshSelectionMode::Vertex:type=QStringLiteral("Vertex");break; case m3d::MeshSelectionMode::Edge:type=QStringLiteral("Edge");break; case m3d::MeshSelectionMode::Face:type=QStringLiteral("Face");break; }
+    (void)controller_->selectMeshElement(type,static_cast<int>(hit->elementId),toggle); return true;
 }
 
 void VulkanViewport::releaseResources() {
@@ -488,7 +523,10 @@ void VulkanViewport::mouseReleaseEvent(QMouseEvent* event) {
     }
     const bool shouldPick = navigationButton_ == Qt::LeftButton && !mouseDragExceeded_;
     navigationButton_ = Qt::NoButton;
-    if (shouldPick) requestPickAt(event->position().x(), event->position().y());
+    if (shouldPick) {
+        const bool toggle=(event->modifiers() & (Qt::ShiftModifier|Qt::ControlModifier))!=0;
+        requestPickAtInternal(event->position(),toggle);
+    }
     event->accept();
 }
 

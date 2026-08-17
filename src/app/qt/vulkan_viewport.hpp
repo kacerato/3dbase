@@ -93,6 +93,8 @@ private:
     void cleanup();
     void recordPickCommands();
     void recordVulkanCommands();
+    void requestPickAtInternal(QPointF position, bool toggle);
+    [[nodiscard]] bool pickMeshElementAt(QPointF position, bool toggle);
     void updateBackendState(QQuickWindow* window);
     void orbitByPixels(QPointF delta);
     void panByPixels(QPointF delta);

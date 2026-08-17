@@ -92,6 +92,15 @@ bool EditorSession::selectMeshFace(EditableFaceId face, MeshSelectionAction acti
     return true;
 }
 
+bool EditorSession::clearMeshSelection() noexcept {
+    if (!meshEditTransaction_) return false;
+    if (meshEditTransaction_->selection.empty()) return true;
+    meshEditTransaction_->selection.clear();
+    ++selectionRevision_;
+    ++uiRevision_;
+    return true;
+}
+
 bool EditorSession::applyMeshEditPreview(const EditableMesh& candidate, std::string* error) {
     if (!document_ || !meshEditTransaction_) return false;
     std::string validationError;

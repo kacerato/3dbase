@@ -89,6 +89,7 @@ public:
                                       MeshSelectionAction action = MeshSelectionAction::Replace);
     [[nodiscard]] bool selectMeshFace(EditableFaceId face,
                                       MeshSelectionAction action = MeshSelectionAction::Replace);
+    [[nodiscard]] bool clearMeshSelection() noexcept;
     [[nodiscard]] bool moveSelectedMeshVertices(Vec3 delta, std::string* error = nullptr);
     [[nodiscard]] bool extrudeSelectedMeshFace(float distance, std::string* error = nullptr);
     [[nodiscard]] bool insetSelectedMeshFace(float ratio, std::string* error = nullptr);
