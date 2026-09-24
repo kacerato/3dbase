@@ -9,11 +9,13 @@
 #include <QPointer>
 #include <QQuickItem>
 #include <QString>
+#include <QVariantList>
 #include <QtQml/qqmlregistration.h>
 
 #include <atomic>
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 class EditorController;
 class QKeyEvent;
@@ -32,6 +34,7 @@ class VulkanViewport : public QQuickItem {
     Q_PROPERTY(QString backendName READ backendName NOTIFY backendChanged)
     Q_PROPERTY(QString projectionName READ projectionName NOTIFY cameraChanged)
     Q_PROPERTY(double cameraDistance READ cameraDistance NOTIFY cameraChanged)
+    Q_PROPERTY(QVariantList knifeStroke READ knifeStroke NOTIFY knifeStrokeChanged)
 
 public:
     explicit VulkanViewport(QQuickItem* parent = nullptr);
@@ -69,6 +72,8 @@ public:
         return successfulPickCount_.load(std::memory_order_relaxed);
     }
 
+    [[nodiscard]] QVariantList knifeStroke() const;
+
     Q_INVOKABLE void toggleProjection();
     Q_INVOKABLE void resetCamera();
     Q_INVOKABLE void requestPickAt(double x, double y);
@@ -77,6 +82,7 @@ signals:
     void controllerChanged();
     void backendChanged();
     void cameraChanged();
+    void knifeStrokeChanged();
 
 protected:
     void releaseResources() override;
@@ -103,6 +109,9 @@ private:
     [[nodiscard]] bool tryBeginGizmoTransform(QPointF position);
     [[nodiscard]] bool updateGizmoTransform(QPointF position);
     void finishGizmoTransform(bool commit);
+    void beginKnifeStroke(QPointF position);
+    void extendKnifeStroke(QPointF position);
+    void finishKnifeStroke(bool apply);
     void cameraMutated();
     void scheduleNextFrame();
 
@@ -127,6 +136,7 @@ private:
     QPointF lastTouchCentroid_;
     QPointF touchStartCentroid_;
     QPointF pendingPickPosition_;
+    std::vector<QPointF> knifeStroke_;
     float transformAxisScreenLength_{1.0F};
     float transformWorldSize_{1.0F};
     float transformStartAngle_{0.0F};
@@ -142,6 +152,7 @@ private:
     std::atomic_uint64_t completedPickCount_{0};
     std::atomic_uint64_t successfulPickCount_{0};
     bool transformInteraction_{false};
+    bool knifeStrokeActive_{false};
     bool mouseDragExceeded_{false};
     bool touchDragExceeded_{false};
     bool pickRequested_{false};

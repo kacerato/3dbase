@@ -5,6 +5,8 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QGuiApplication>
+#include <QMouseEvent>
+#include <QPointF>
 #include <QQmlApplicationEngine>
 #include <QQuickGraphicsConfiguration>
 #include <QQuickStyle>
@@ -49,6 +51,8 @@ int main(int argc, char* argv[]) {
                                      QStringLiteral("--smoke-test")) != arguments.cend();
     const bool vulkanSmokeTest = std::find(arguments.cbegin(), arguments.cend(),
                                            QStringLiteral("--vulkan-smoke-test")) != arguments.cend();
+    const bool knifeSmokeTest = std::find(arguments.cbegin(), arguments.cend(),
+                                          QStringLiteral("--knife-smoke-test")) != arguments.cend();
     const bool requirePipelineCache = std::find(arguments.cbegin(), arguments.cend(),
                                                 QStringLiteral("--require-pipeline-cache")) != arguments.cend();
 #if !defined(Q_OS_ANDROID)
@@ -75,8 +79,9 @@ int main(int argc, char* argv[]) {
     }
 
     EditorController controller;
-    if (vulkanSmokeTest) {
-        if (!controller.createProject(QStringLiteral("Vulkan Smoke Test")) ||
+    if (vulkanSmokeTest || knifeSmokeTest) {
+        if (!controller.createProject(knifeSmokeTest ? QStringLiteral("Knife Smoke Test")
+                                                 : QStringLiteral("Vulkan Smoke Test")) ||
             !controller.addObject(QStringLiteral("Mesh"))) return 3;
     }
 
@@ -125,6 +130,44 @@ int main(int argc, char* argv[]) {
                                 viewport->successfulPickCount() > 0 &&
                                 (!requirePipelineCache || viewport->pipelineCacheLoaded());
             app.exit(passed ? 0 : 4);
+        });
+    }
+
+    if (knifeSmokeTest) {
+        // Drives the real viewport input path: a horizontal drag through the centre of the view
+        // must be turned into a knife stroke that cuts the edited cube.
+        QTimer::singleShot(300, &app, [&app, &controller, rootWindow] {
+            auto* viewport = rootWindow->findChild<VulkanViewport*>(QStringLiteral("nativeVulkanViewport"));
+            if (!viewport || viewport->width() <= 0.0 || viewport->height() <= 0.0 ||
+                !controller.toggleEditMode()) {
+                app.exit(6);
+                return;
+            }
+            controller.setKnifeMode(true);
+            const auto facesBefore = controller.meshEditSnapshot().faces.size();
+            const QPointF centre = viewport->mapToScene(QPointF(viewport->width() * 0.5, viewport->height() * 0.5));
+            const qreal reach = viewport->width() * 0.3;
+            const auto send = [rootWindow](QEvent::Type type, QPointF position, Qt::MouseButtons buttons) {
+                const Qt::MouseButton button = type == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton;
+                QMouseEvent event(type, position, position, rootWindow->mapToGlobal(position),
+                                  button, buttons, Qt::NoModifier);
+                QCoreApplication::sendEvent(rootWindow, &event);
+            };
+            constexpr int kSteps = 24;
+            send(QEvent::MouseButtonPress, centre - QPointF(reach, 0.0), Qt::LeftButton);
+            for (int step = 1; step <= kSteps; ++step) {
+                const qreal t = static_cast<qreal>(step) / kSteps;
+                send(QEvent::MouseMove, centre + QPointF(reach * (2.0 * t - 1.0), 3.0 * t), Qt::LeftButton);
+            }
+            send(QEvent::MouseButtonRelease, centre + QPointF(reach, 3.0), Qt::NoButton);
+            const auto facesAfter = controller.meshEditSnapshot().faces.size();
+            const bool passed = controller.knifeMode() && viewport->knifeStroke().isEmpty() &&
+                                facesAfter > facesBefore;
+            if (!passed) {
+                qCritical().noquote() << "Knife smoke test failed:" << controller.statusMessage()
+                                      << "faces" << facesBefore << "->" << facesAfter;
+            }
+            app.exit(passed ? 0 : 7);
         });
     }
 

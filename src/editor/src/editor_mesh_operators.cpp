@@ -435,4 +435,25 @@ bool EditorSession::bevelSelectedMeshEdges(float width, std::uint32_t segments, 
     return true;
 }
 
+bool EditorSession::knifeCutMesh(std::span<const EditableKnifePoint> path, std::string* error) {
+    if (!meshEditTransaction_) {
+        if (error) *error = "Edit Mode is not active";
+        return false;
+    }
+    EditableMesh candidate = meshEditTransaction_->working;
+    const auto result = candidate.knifeCut(path, error);
+    if (!result || !applyMeshEditPreview(candidate, error)) return false;
+
+    auto& selection = meshEditTransaction_->selection;
+    selection.clear();
+    selection.setMode(MeshSelectionMode::Edge);
+    for (const auto edge : result->edges) {
+        (void)selection.select(meshEditTransaction_->working, edge, MeshSelectionAction::Add);
+    }
+    ++selectionRevision_;
+    ++uiRevision_;
+    if (error) error->clear();
+    return true;
+}
+
 } // namespace m3d

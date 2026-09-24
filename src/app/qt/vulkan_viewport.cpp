@@ -29,6 +29,11 @@ namespace {
 
 constexpr float kOrbitRadiansPerPixel = 0.006F;
 constexpr float kWheelZoomExponentPerUnit = 0.0015F;
+// Knife strokes: vertex snapping matches the vertex pick radius; strokes are thinned to 2 px
+// steps and capped so a long drag cannot grow without bound.
+constexpr float kKnifeVertexSnapPixels = 14.0F;
+constexpr qreal kKnifeMinimumStrokeStep = 2.0;
+constexpr std::size_t kKnifeMaximumStrokePoints = 4096U;
 constexpr float kDegreesToRadians = 0.01745329251994329577F;
 constexpr float kGizmoPixelSize = 90.0F;
 constexpr qreal kTapSlop = 7.0;
@@ -167,7 +172,7 @@ QString graphicsApiName(QSGRendererInterface::GraphicsApi api) {
     return presentation;
 }
 
-struct ProjectedPoint final { QPointF screen{}; float depth{1.0F}; };
+struct ProjectedPoint final { QPointF screen{}; float depth{1.0F}; float inverseW{1.0F}; };
 
 [[nodiscard]] std::optional<ProjectedPoint> projectWorldWithDepth(
     const m3d::Mat4& viewProjection, m3d::Vec3 world, qreal width, qreal height) noexcept {
@@ -178,7 +183,7 @@ struct ProjectedPoint final { QPointF screen{}; float depth{1.0F}; };
     if (clipW<=1.0e-5F) return std::nullopt;
     const float ndcX=clipX/clipW, ndcY=clipY/clipW, ndcZ=clipZ/clipW;
     if(!std::isfinite(ndcX)||!std::isfinite(ndcY)||!std::isfinite(ndcZ)) return std::nullopt;
-    return ProjectedPoint{QPointF((static_cast<qreal>(ndcX)*0.5+0.5)*width,(static_cast<qreal>(ndcY)*0.5+0.5)*height),ndcZ};
+    return ProjectedPoint{QPointF((static_cast<qreal>(ndcX)*0.5+0.5)*width,(static_cast<qreal>(ndcY)*0.5+0.5)*height),ndcZ,1.0F/clipW};
 }
 
 [[nodiscard]] std::optional<QPointF> projectWorld(const m3d::Mat4& viewProjection,m3d::Vec3 world,qreal width,qreal height) noexcept {
@@ -190,6 +195,35 @@ struct ProjectedPoint final { QPointF screen{}; float depth{1.0F}; };
     return {matrix.at(0,0)*point.x+matrix.at(0,1)*point.y+matrix.at(0,2)*point.z+matrix.at(0,3),
             matrix.at(1,0)*point.x+matrix.at(1,1)*point.y+matrix.at(1,2)*point.z+matrix.at(1,3),
             matrix.at(2,0)*point.x+matrix.at(2,1)*point.y+matrix.at(2,2)*point.z+matrix.at(2,3)};
+}
+
+// Screen-space image of the mesh being edited, shared by element picking and knife strokes.
+struct EditMeshScreenData final {
+    std::vector<m3d::MeshScreenVertex> vertices;
+    std::vector<m3d::MeshScreenEdge> edges;
+    std::vector<m3d::MeshScreenFace> faces;
+};
+
+[[nodiscard]] EditMeshScreenData projectEditMesh(const m3d::MeshEditPresentationSnapshot& editMesh,
+                                                 const m3d::Mat4& worldTransform,const m3d::Mat4& viewProjection,
+                                                 qreal width,qreal height) {
+    EditMeshScreenData data;
+    std::unordered_map<std::uint32_t,m3d::MeshScreenPoint> projectedById; data.vertices.reserve(editMesh.vertices.size()); projectedById.reserve(editMesh.vertices.size());
+    for(const auto& vertex:editMesh.vertices){
+        const auto projected=projectWorldWithDepth(viewProjection,transformPoint(worldTransform,vertex.position),width,height);
+        if(!projected||projected->depth<0.0F||projected->depth>1.0F) continue;
+        const m3d::MeshScreenPoint point{static_cast<float>(projected->screen.x()),static_cast<float>(projected->screen.y()),projected->depth,projected->inverseW};
+        projectedById.emplace(vertex.id.value,point); data.vertices.push_back({vertex.id,point});
+    }
+    data.edges.reserve(editMesh.edges.size());
+    for(const auto& edge:editMesh.edges){ const auto a=projectedById.find(edge.first.value),b=projectedById.find(edge.second.value); if(a!=projectedById.end()&&b!=projectedById.end()) data.edges.push_back({edge.id,a->second,b->second,edge.first,edge.second}); }
+    data.faces.reserve(editMesh.faces.size());
+    for(const auto& face:editMesh.faces){ m3d::MeshScreenFace projectedFace; projectedFace.id=face.id; projectedFace.vertices.reserve(face.vertices.size()); bool complete=true;
+        for(const auto vertexId:face.vertices){ const auto found=projectedById.find(vertexId.value); if(found==projectedById.end()){ complete=false; break; } projectedFace.vertices.push_back(found->second); }
+        projectedFace.vertexIds=face.vertices;
+        if(complete&&projectedFace.vertices.size()>=3U) data.faces.push_back(std::move(projectedFace));
+    }
+    return data;
 }
 
 [[nodiscard]] float cross2D(QPointF a, QPointF b, QPointF c) noexcept {
@@ -450,25 +484,58 @@ bool VulkanViewport::pickMeshElementAt(QPointF position,bool toggle) {
     const auto* editObject=editMesh.active()?scene.find(editMesh.object):nullptr;
     if(!editObject){ (void)controller_->clearMeshSelection(); return true; }
     const float aspect=static_cast<float>(width()/std::max(height(),1.0)); const auto viewProjection=camera_.viewProjectionMatrix(aspect);
-    std::vector<m3d::MeshScreenVertex> vertices; std::vector<m3d::MeshScreenEdge> edges; std::vector<m3d::MeshScreenFace> faces;
-    std::unordered_map<std::uint32_t,m3d::MeshScreenPoint> projectedById; vertices.reserve(editMesh.vertices.size()); projectedById.reserve(editMesh.vertices.size());
-    for(const auto& vertex:editMesh.vertices){
-        const auto projected=projectWorldWithDepth(viewProjection,transformPoint(editObject->worldTransform,vertex.position),width(),height());
-        if(!projected||projected->depth<0.0F||projected->depth>1.0F) continue;
-        const m3d::MeshScreenPoint point{static_cast<float>(projected->screen.x()),static_cast<float>(projected->screen.y()),projected->depth};
-        projectedById.emplace(vertex.id.value,point); vertices.push_back({vertex.id,point});
-    }
-    edges.reserve(editMesh.edges.size());
-    for(const auto& edge:editMesh.edges){ const auto a=projectedById.find(edge.first.value),b=projectedById.find(edge.second.value); if(a!=projectedById.end()&&b!=projectedById.end()) edges.push_back({edge.id,a->second,b->second}); }
-    faces.reserve(editMesh.faces.size());
-    for(const auto& face:editMesh.faces){ m3d::MeshScreenFace projectedFace; projectedFace.id=face.id; projectedFace.vertices.reserve(face.vertices.size()); bool complete=true;
-        for(const auto vertexId:face.vertices){ const auto found=projectedById.find(vertexId.value); if(found==projectedById.end()){ complete=false; break; } projectedFace.vertices.push_back(found->second); }
-        if(complete&&projectedFace.vertices.size()>=3U) faces.push_back(std::move(projectedFace));
-    }
+    const auto screen=projectEditMesh(editMesh,editObject->worldTransform,viewProjection,width(),height());
     m3d::MeshScreenPickRequest request; request.mode=editMesh.mode; request.x=static_cast<float>(position.x()); request.y=static_cast<float>(position.y());
-    const auto hit=m3d::MeshScreenPicker::pick(vertices,edges,faces,request); if(!hit){ (void)controller_->clearMeshSelection(); return true; }
+    const auto hit=m3d::MeshScreenPicker::pick(screen.vertices,screen.edges,screen.faces,request); if(!hit){ (void)controller_->clearMeshSelection(); return true; }
     QString type; switch(hit->mode){ case m3d::MeshSelectionMode::Vertex:type=QStringLiteral("Vertex");break; case m3d::MeshSelectionMode::Edge:type=QStringLiteral("Edge");break; case m3d::MeshSelectionMode::Face:type=QStringLiteral("Face");break; }
     (void)controller_->selectMeshElement(type,static_cast<int>(hit->elementId),toggle); return true;
+}
+
+QVariantList VulkanViewport::knifeStroke() const {
+    QVariantList points;
+    points.reserve(static_cast<qsizetype>(knifeStroke_.size()));
+    for (const auto& point : knifeStroke_) points.append(point);
+    return points;
+}
+
+void VulkanViewport::beginKnifeStroke(QPointF position) {
+    knifeStroke_.assign(1U, position);
+    knifeStrokeActive_ = true;
+    emit knifeStrokeChanged();
+}
+
+void VulkanViewport::extendKnifeStroke(QPointF position) {
+    if (!knifeStrokeActive_ || knifeStroke_.size() >= kKnifeMaximumStrokePoints) return;
+    const QPointF delta = position - knifeStroke_.back();
+    if (delta.x() * delta.x() + delta.y() * delta.y() < kKnifeMinimumStrokeStep * kKnifeMinimumStrokeStep) return;
+    knifeStroke_.push_back(position);
+    emit knifeStrokeChanged();
+}
+
+void VulkanViewport::finishKnifeStroke(bool apply) {
+    const std::vector<QPointF> stroke = std::move(knifeStroke_);
+    knifeStroke_.clear();
+    knifeStrokeActive_ = false;
+    emit knifeStrokeChanged();
+    if (!apply || stroke.size() < 2U || !controller_ || !controller_->editMode() ||
+        width() <= 0.0 || height() <= 0.0) return;
+
+    const auto editMesh = controller_->meshEditSnapshot();
+    const auto scene = controller_->renderSnapshot();
+    const auto* editObject = editMesh.active() ? scene.find(editMesh.object) : nullptr;
+    if (!editObject) return;
+    const float aspect = static_cast<float>(width() / std::max(height(), 1.0));
+    const auto screen = projectEditMesh(editMesh, editObject->worldTransform,
+                                        camera_.viewProjectionMatrix(aspect), width(), height());
+    m3d::MeshKnifeStrokeRequest request;
+    request.vertexSnapRadius = kKnifeVertexSnapPixels;
+    request.stroke.reserve(stroke.size());
+    for (const auto& point : stroke) {
+        request.stroke.push_back({static_cast<float>(point.x()), static_cast<float>(point.y()), 0.0F, 1.0F});
+    }
+    const auto path = m3d::MeshScreenPicker::planKnifeStroke(screen.edges, screen.faces, request);
+    (void)controller_->applyKnifePath(path);
+    update();
 }
 
 void VulkanViewport::releaseResources() {
@@ -476,6 +543,11 @@ void VulkanViewport::releaseResources() {
 }
 
 void VulkanViewport::keyPressEvent(QKeyEvent* event) {
+    if (knifeStrokeActive_ && event->key() == Qt::Key_Escape) {
+        finishKnifeStroke(false);
+        event->accept();
+        return;
+    }
     if (transformInteraction_ && event->key() == Qt::Key_Escape) {
         finishGizmoTransform(false);
         event->accept();
@@ -491,6 +563,11 @@ void VulkanViewport::keyPressEvent(QKeyEvent* event) {
 }
 
 void VulkanViewport::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && controller_ && controller_->knifeMode()) {
+        beginKnifeStroke(event->position());
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton && tryBeginGizmoTransform(event->position())) {
         event->accept();
         return;
@@ -505,6 +582,11 @@ void VulkanViewport::mousePressEvent(QMouseEvent* event) {
 void VulkanViewport::mouseMoveEvent(QMouseEvent* event) {
     if (transformInteraction_) {
         (void)updateGizmoTransform(event->position());
+        event->accept();
+        return;
+    }
+    if (knifeStrokeActive_) {
+        extendKnifeStroke(event->position());
         event->accept();
         return;
     }
@@ -524,6 +606,12 @@ void VulkanViewport::mouseMoveEvent(QMouseEvent* event) {
 void VulkanViewport::mouseReleaseEvent(QMouseEvent* event) {
     if (transformInteraction_) {
         finishGizmoTransform(true);
+        event->accept();
+        return;
+    }
+    if (knifeStrokeActive_) {
+        extendKnifeStroke(event->position());
+        finishKnifeStroke(true);
         event->accept();
         return;
     }
@@ -565,6 +653,34 @@ void VulkanViewport::touchEvent(QTouchEvent* event) {
         } else {
             (void)updateGizmoTransform(points.constFirst().position());
         }
+        event->accept();
+        return;
+    }
+
+    if (knifeStrokeActive_) {
+        if (event->type() == QEvent::TouchCancel) {
+            finishKnifeStroke(false);
+        } else if (event->type() == QEvent::TouchEnd || pointCount == 0) {
+            if (pointCount == 1) extendKnifeStroke(points.constFirst().position());
+            finishKnifeStroke(pointCount <= 1);
+        } else if (pointCount == 1) {
+            extendKnifeStroke(points.constFirst().position());
+            event->accept();
+            return;
+        } else {
+            // A second finger abandons the stroke and hands the gesture back to navigation.
+            finishKnifeStroke(false);
+        }
+        if (pointCount <= 1 || event->type() != QEvent::TouchUpdate) {
+            lastTouchPointCount_ = 0;
+            touchDragExceeded_ = false;
+            event->accept();
+            return;
+        }
+    }
+
+    if (event->type() == QEvent::TouchBegin && pointCount == 1 && controller_ && controller_->knifeMode()) {
+        beginKnifeStroke(points.constFirst().position());
         event->accept();
         return;
     }

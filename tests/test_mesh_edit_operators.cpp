@@ -725,3 +725,37 @@ TEST_CASE("edit mode bevel failure leaves working mesh and selection unchanged")
     REQUIRE(!session.isDirty());
     REQUIRE(session.cancelMeshEdit());
 }
+
+TEST_CASE("edit mode knife cut selects the new edges and is one undo step") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+
+    const auto* mesh = session.editableMesh();
+    const auto face = mesh->faces().front().id;
+    const auto* first = mesh->findHalfEdge(mesh->findFace(face)->halfEdge);
+    const auto* third = mesh->findHalfEdge(mesh->findHalfEdge(first->next)->next);
+    const std::array knife{
+        m3d::EditableKnifePoint::onEdge(first->edge, first->origin, 0.5F),
+        m3d::EditableKnifePoint::onEdge(third->edge, third->origin, 0.5F),
+    };
+    REQUIRE(!session.knifeCutMesh(std::array{knife.front()}, &error));
+    REQUIRE(session.editableMesh()->vertexCount() == 8U);
+    REQUIRE(session.knifeCutMesh(knife, &error));
+    REQUIRE(error.empty());
+    REQUIRE(session.editableMesh()->vertexCount() == 10U);
+    REQUIRE(session.editableMesh()->faceCount() == 7U);
+    REQUIRE(session.meshSelection()->mode() == m3d::MeshSelectionMode::Edge);
+    REQUIRE(session.meshSelection()->selectedEdges().size() == 1U);
+
+    REQUIRE(session.commitMeshEdit("Knife", &error));
+    REQUIRE(session.nextUndoName() == "Knife");
+    REQUIRE(session.undo());
+    const auto resource = *session.scene()->find(*object)->meshResource;
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 6U);
+    REQUIRE(session.redo());
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 7U);
+}

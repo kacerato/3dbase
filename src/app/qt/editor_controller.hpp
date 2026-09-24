@@ -47,6 +47,7 @@ class EditorController final : public QObject {
     Q_PROPERTY(bool transformSnapEnabled READ transformSnapEnabled NOTIFY transformSettingsChanged)
     Q_PROPERTY(bool transformInProgress READ transformInProgress NOTIFY transformActivityChanged)
     Q_PROPERTY(bool editMode READ editMode NOTIFY editModeChanged)
+    Q_PROPERTY(bool knifeMode READ knifeMode NOTIFY editModeChanged)
     Q_PROPERTY(QString meshSelectionMode READ meshSelectionMode NOTIFY editModeChanged)
     Q_PROPERTY(QStringList meshSelectionModes READ meshSelectionModes CONSTANT)
     Q_PROPERTY(int selectedMeshElementCount READ selectedMeshElementCount NOTIFY editModeChanged)
@@ -90,6 +91,8 @@ public:
     [[nodiscard]] bool transformSnapEnabled() const noexcept { return transformSnapEnabled_; }
     [[nodiscard]] bool transformInProgress() const noexcept { return manipulator_.active(); }
     [[nodiscard]] bool editMode() const noexcept { return session_.hasMeshEditTransaction(); }
+    // While active, viewport drags draw knife strokes instead of orbiting the camera.
+    [[nodiscard]] bool knifeMode() const noexcept { return knifeMode_ && editMode(); }
     [[nodiscard]] QString meshSelectionMode() const;
     [[nodiscard]] QStringList meshSelectionModes() const;
     [[nodiscard]] int selectedMeshElementCount() const;
@@ -169,6 +172,7 @@ public:
     Q_INVOKABLE bool loopCutSelectedEdge(int cuts = 1);
     Q_INVOKABLE bool deleteSelectedMeshElements();
     Q_INVOKABLE bool bevelSelectedEdges(double width, int segments = 1);
+    Q_INVOKABLE void setKnifeMode(bool enabled);
     Q_INVOKABLE bool flipSelectedNormals();
     Q_INVOKABLE bool recalculateNormalsOutside();
 
@@ -176,6 +180,7 @@ public:
     // all scene mutation remains inside the EditorSession transaction system.
     [[nodiscard]] bool beginViewportTransform(m3d::TransformConstraint constraint);
     [[nodiscard]] bool updateViewportTranslation(m3d::Vec3 gizmoComponents);
+    [[nodiscard]] bool applyKnifePath(std::span<const m3d::EditableKnifePoint> path);
     [[nodiscard]] bool updateViewportRotation(float angleRadians);
     [[nodiscard]] bool updateViewportScale(float factor);
     [[nodiscard]] bool commitViewportTransform();
@@ -228,4 +233,5 @@ private:
     QStringList recentProjects_;
     QString statusMessage_;
     bool recoveryAvailable_{false};
+    bool knifeMode_{false};
 };

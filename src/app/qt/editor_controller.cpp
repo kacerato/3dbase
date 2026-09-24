@@ -857,6 +857,36 @@ bool EditorController::bevelSelectedEdges(double width, int segments) {
     return true;
 }
 
+void EditorController::setKnifeMode(bool enabled) {
+    if (enabled && !editMode()) {
+        setStatus(QStringLiteral("Knife requires Edit Mode."));
+        return;
+    }
+    if (knifeMode_ == enabled) return;
+    knifeMode_ = enabled;
+    setStatus(enabled ? QStringLiteral("Knife: draw a stroke across the visible mesh.")
+                      : QStringLiteral("Knife off."));
+    emit editModeChanged();
+}
+
+bool EditorController::applyKnifePath(std::span<const m3d::EditableKnifePoint> path) {
+    if (path.empty()) {
+        setStatus(QStringLiteral("Knife stroke did not cross any visible edge."));
+        return false;
+    }
+    std::string error;
+    if (!session_.knifeCutMesh(path, &error)) {
+        setStatus(QString::fromStdString(error));
+        return false;
+    }
+    const auto* selection = session_.meshSelection();
+    const auto cutEdges = selection ? selection->selectedEdges().size() : 0U;
+    setStatus(QStringLiteral("Knife cut %1 edge(s).").arg(cutEdges));
+    refreshUi();
+    emit editModeChanged();
+    return true;
+}
+
 bool EditorController::flipSelectedNormals() {
     std::string error;
     if (!session_.flipSelectedMeshNormalComponents(&error)) {

@@ -33,6 +33,33 @@ Rectangle {
         color: "#40505f68"
     }
 
+    // Live knife stroke drawn over the native viewport; it never takes input itself.
+    Canvas {
+        id: knifeStrokeCanvas
+        anchors.fill: root
+        visible: nativeViewport.knifeStroke.length > 1
+        onPaint: {
+            const context = knifeStrokeCanvas.getContext("2d")
+            context.reset()
+            const points = nativeViewport.knifeStroke
+            if (points.length < 2)
+                return
+            context.lineWidth = 2
+            context.strokeStyle = "#ffcf4a"
+            context.beginPath()
+            context.moveTo(points[0].x, points[0].y)
+            for (let index = 1; index < points.length; ++index)
+                context.lineTo(points[index].x, points[index].y)
+            context.stroke()
+        }
+    }
+    Connections {
+        target: nativeViewport
+        function onKnifeStrokeChanged() {
+            knifeStrokeCanvas.requestPaint()
+        }
+    }
+
     Rectangle {
         visible: !nativeViewport.vulkanActive
         anchors.centerIn: parent
@@ -237,6 +264,13 @@ Rectangle {
             enabled: root.controller.meshSelectionMode === "Edge"
                      && root.controller.selectedMeshElementCount >= 1
             onClicked: root.controller.bevelSelectedEdges(bevelWidth.value / 100.0, bevelSegments.value)
+        }
+        Button {
+            height: 38
+            visible: root.controller.editMode
+            text: root.controller.knifeMode ? "Knife: draw" : "Knife"
+            highlighted: root.controller.knifeMode
+            onClicked: root.controller.setKnifeMode(!root.controller.knifeMode)
         }
         Button {
             height: 38

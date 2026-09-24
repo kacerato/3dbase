@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -106,6 +107,9 @@ public:
     [[nodiscard]] bool deleteSelectedMeshElements(std::string* error = nullptr);
     [[nodiscard]] bool bevelSelectedMeshEdges(float width, std::uint32_t segments = 1U,
                                               std::string* error = nullptr);
+    // Applies a knife path (see EditableMesh::knifeCut) and selects the resulting cut edges.
+    [[nodiscard]] bool knifeCutMesh(std::span<const EditableKnifePoint> path,
+                                    std::string* error = nullptr);
     [[nodiscard]] bool flipSelectedMeshNormalComponents(std::string* error = nullptr);
     [[nodiscard]] bool recalculateMeshNormalsOutside(std::string* error = nullptr);
 

@@ -19,6 +19,8 @@ add_executable(mobile3d_core_tests
     test_mesh_screen_picker.cpp
     test_mesh_edit_operators.cpp
     test_mesh_bevel.cpp
+    test_mesh_knife.cpp
+    test_mesh_knife_stroke.cpp
 )
 
 target_link_libraries(mobile3d_core_tests

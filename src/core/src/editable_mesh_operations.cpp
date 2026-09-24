@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <deque>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <set>
@@ -1789,6 +1790,297 @@ std::optional<EditableBevelResult> EditableMesh::bevelEdges(
     }
     if (!working.validate(error)) return std::nullopt;
 
+    *this = std::move(working);
+    if (error) error->clear();
+    return result;
+}
+
+// Knife: cuts along a surface path. Consecutive path points must share exactly one face,
+// which is split by a chord between them; points on edges split those edges first. Points
+// within 1e-4 of an edge endpoint snap to that vertex. An empty point (no vertex, no edge)
+// separates independent runs that are all cut in the same atomic operation.
+std::optional<EditableKnifeResult> EditableMesh::knifeCut(
+    std::span<const EditableKnifePoint> path, std::string* error) {
+    constexpr float kSnap = 1.0e-4F;
+    struct PathPoint final {
+        EditableVertexId vertex{};
+        EditableEdgeId edge{};
+        float fromOrigin{0.0F}; // parameter from the edge's representative half-edge origin
+    };
+    const auto isBreak = [](const PathPoint& point) { return point.vertex.isNull() && point.edge.isNull(); };
+    const auto samePoint = [](const PathPoint& left, const PathPoint& right) {
+        if (!left.vertex.isNull() || !right.vertex.isNull()) return left.vertex == right.vertex;
+        return left.edge == right.edge && std::abs(left.fromOrigin - right.fromOrigin) <= kSnap;
+    };
+
+    std::vector<PathPoint> points;
+    points.reserve(path.size());
+    std::size_t pathPoints = 0U;
+    for (const auto& input : path) {
+        PathPoint point;
+        if (input.vertex.isNull() && input.edge.isNull()) {
+            if (!points.empty() && !isBreak(points.back())) points.push_back(point);
+            continue;
+        }
+        if (!input.vertex.isNull()) {
+            const auto* vertex = findVertex(input.vertex);
+            if (!vertex || vertex->outgoing.isNull()) {
+                if (error) *error = "Knife path references a missing vertex";
+                return std::nullopt;
+            }
+            point.vertex = input.vertex;
+        } else {
+            const auto* edge = findEdge(input.edge);
+            const auto* halfEdge = edge ? findHalfEdge(edge->halfEdge) : nullptr;
+            if (!edge || !halfEdge) {
+                if (error) *error = "Knife path references a missing edge";
+                return std::nullopt;
+            }
+            if (!std::isfinite(input.t) || input.t < 0.0F || input.t > 1.0F) {
+                if (error) *error = "Knife edge parameter must be within [0, 1]";
+                return std::nullopt;
+            }
+            const EditableVertexId origin = halfEdge->origin;
+            const EditableVertexId end = destination(halfEdge->id);
+            if (input.from != origin && input.from != end) {
+                if (error) *error = "Knife edge point must be measured from one of the edge endpoints";
+                return std::nullopt;
+            }
+            const float fromOrigin = input.from == origin ? input.t : 1.0F - input.t;
+            if (fromOrigin <= kSnap) point.vertex = origin;
+            else if (fromOrigin >= 1.0F - kSnap) point.vertex = end;
+            else {
+                point.edge = input.edge;
+                point.fromOrigin = fromOrigin;
+            }
+        }
+        if (!points.empty() && samePoint(points.back(), point)) continue;
+        points.push_back(point);
+        ++pathPoints;
+    }
+    if (pathPoints < 2U) {
+        if (error) *error = "Knife path needs at least two distinct points";
+        return std::nullopt;
+    }
+
+    const auto facesAroundVertex = [this](EditableVertexId vertexId) {
+        std::set<EditableFaceId> result;
+        const EditableHalfEdgeId start = findVertex(vertexId)->outgoing;
+        EditableHalfEdgeId current = start;
+        bool boundary = false;
+        for (std::size_t step = 0; step <= halfEdgeCount_; ++step) {
+            const auto* halfEdge = findHalfEdge(current);
+            if (!halfEdge) break;
+            result.insert(halfEdge->face);
+            const auto* previous = findHalfEdge(previousHalfEdge(current));
+            if (!previous || previous->twin.isNull()) { boundary = true; break; }
+            current = previous->twin;
+            if (current == start) break;
+        }
+        // An open fan is walked the other way from the start as well.
+        current = start;
+        for (std::size_t step = 0; boundary && step <= halfEdgeCount_; ++step) {
+            const auto* halfEdge = findHalfEdge(current);
+            const auto* twin = halfEdge && !halfEdge->twin.isNull() ? findHalfEdge(halfEdge->twin) : nullptr;
+            const auto* next = twin ? findHalfEdge(twin->next) : nullptr;
+            if (!next) break;
+            result.insert(next->face);
+            current = next->id;
+        }
+        return result;
+    };
+    const auto facesOf = [this, &facesAroundVertex](const PathPoint& point) {
+        if (!point.vertex.isNull()) return facesAroundVertex(point.vertex);
+        std::set<EditableFaceId> result;
+        const auto* halfEdge = findHalfEdge(findEdge(point.edge)->halfEdge);
+        result.insert(halfEdge->face);
+        if (const auto* twin = findHalfEdge(halfEdge->twin)) result.insert(twin->face);
+        return result;
+    };
+    const auto edgeEndpoints = [this](EditableEdgeId edgeId) {
+        const auto* halfEdge = findHalfEdge(findEdge(edgeId)->halfEdge);
+        return std::array<EditableVertexId, 2>{halfEdge->origin, destination(halfEdge->id)};
+    };
+    // Segments running along an existing edge split nothing.
+    const auto alongExistingEdge = [this, &edgeEndpoints](const PathPoint& left, const PathPoint& right) {
+        if (!left.vertex.isNull() && !right.vertex.isNull()) {
+            return directedEdges_.contains(DirectedEdgeKey{left.vertex.value, right.vertex.value}) ||
+                   directedEdges_.contains(DirectedEdgeKey{right.vertex.value, left.vertex.value});
+        }
+        if (!left.edge.isNull() && !right.edge.isNull()) return left.edge == right.edge;
+        const auto& onEdge = left.edge.isNull() ? right : left;
+        const auto& atVertex = left.edge.isNull() ? left : right;
+        const auto ends = edgeEndpoints(onEdge.edge);
+        return ends[0] == atVertex.vertex || ends[1] == atVertex.vertex;
+    };
+
+    struct Cut final {
+        EditableFaceId face{};
+        std::size_t first{0};
+        std::size_t second{0};
+    };
+    std::vector<Cut> cuts;
+    for (std::size_t index = 0; index + 1U < points.size(); ++index) {
+        if (isBreak(points[index]) || isBreak(points[index + 1U])) continue;
+        if (alongExistingEdge(points[index], points[index + 1U])) continue;
+        const auto left = facesOf(points[index]);
+        const auto right = facesOf(points[index + 1U]);
+        std::vector<EditableFaceId> shared;
+        std::set_intersection(left.begin(), left.end(), right.begin(), right.end(),
+                              std::back_inserter(shared));
+        if (shared.size() != 1U) {
+            if (error) {
+                *error = shared.empty() ? "Knife path jumps between points that do not share a face"
+                                        : "Knife path segment is ambiguous between several faces";
+            }
+            return std::nullopt;
+        }
+        cuts.push_back(Cut{shared.front(), index, index + 1U});
+    }
+
+    EditableMesh working = *this;
+    EditableKnifeResult result;
+    // Split vertices per edge, kept sorted by parameter from the representative origin.
+    std::map<EditableEdgeId, std::vector<std::pair<float, EditableVertexId>>> splits;
+    std::vector<EditableVertexId> resolved(points.size());
+    for (std::size_t index = 0; index < points.size(); ++index) {
+        const auto& point = points[index];
+        if (isBreak(point)) continue;
+        if (!point.vertex.isNull()) {
+            resolved[index] = point.vertex;
+            continue;
+        }
+        auto& onEdge = splits[point.edge];
+        const auto existing = std::find_if(onEdge.begin(), onEdge.end(), [&point](const auto& split) {
+            return std::abs(split.first - point.fromOrigin) <= kSnap;
+        });
+        if (existing != onEdge.end()) {
+            resolved[index] = existing->second;
+            continue;
+        }
+        const auto ends = edgeEndpoints(point.edge);
+        const Vec3 start = findVertex(ends[0])->position;
+        const Vec3 end = findVertex(ends[1])->position;
+        const EditableVertexId created =
+            working.addVertex(vecAdd(start, vecScale(vecSub(end, start), point.fromOrigin)));
+        onEdge.emplace_back(point.fromOrigin, created);
+        result.vertices.push_back(created);
+        resolved[index] = created;
+    }
+    for (auto& [_, onEdge] : splits) std::sort(onEdge.begin(), onEdge.end());
+
+    std::set<EditableFaceId> affected;
+    for (const auto& cut : cuts) affected.insert(cut.face);
+    for (const auto& [edgeId, _] : splits) {
+        const auto* halfEdge = findHalfEdge(findEdge(edgeId)->halfEdge);
+        affected.insert(halfEdge->face);
+        if (const auto* twin = findHalfEdge(halfEdge->twin)) affected.insert(twin->face);
+    }
+    if (cuts.empty() && splits.empty()) {
+        if (error) *error = "Knife path does not cross any face";
+        return std::nullopt;
+    }
+
+    std::map<EditableFaceId, std::vector<std::vector<EditableVertexId>>> pieces;
+    for (const auto faceId : affected) {
+        std::vector<EditableVertexId> loop;
+        const auto corners = faceVertices(faceId);
+        for (std::size_t index = 0; index < corners.size(); ++index) {
+            const EditableVertexId from = corners[index];
+            const EditableVertexId to = corners[(index + 1U) % corners.size()];
+            loop.push_back(from);
+            const auto halfEdgeId = directedEdges_.at(DirectedEdgeKey{from.value, to.value});
+            const auto found = splits.find(findHalfEdge(halfEdgeId)->edge);
+            if (found == splits.end()) continue;
+            const bool forward = edgeEndpoints(found->first)[0] == from;
+            if (forward) {
+                for (const auto& split : found->second) loop.push_back(split.second);
+            } else {
+                for (auto it = found->second.rbegin(); it != found->second.rend(); ++it) loop.push_back(it->second);
+            }
+        }
+        pieces[faceId].push_back(std::move(loop));
+    }
+
+    std::vector<std::pair<EditableVertexId, EditableVertexId>> cutPairs;
+    for (const auto& cut : cuts) {
+        const EditableVertexId a = resolved[cut.first];
+        const EditableVertexId b = resolved[cut.second];
+        auto& facePieces = pieces[cut.face];
+        bool placed = false;
+        for (std::size_t pieceIndex = 0; pieceIndex < facePieces.size() && !placed; ++pieceIndex) {
+            const auto& piece = facePieces[pieceIndex];
+            const auto ia = std::find(piece.begin(), piece.end(), a);
+            const auto ib = std::find(piece.begin(), piece.end(), b);
+            if (ia == piece.end() || ib == piece.end()) continue;
+            placed = true;
+            const auto first = static_cast<std::size_t>(ia - piece.begin());
+            const auto second = static_cast<std::size_t>(ib - piece.begin());
+            const std::size_t count = piece.size();
+            if ((first + 1U) % count == second || (second + 1U) % count == first) break;
+            std::vector<EditableVertexId> one;
+            std::vector<EditableVertexId> two;
+            for (std::size_t k = first;; k = (k + 1U) % count) {
+                one.push_back(piece[k]);
+                if (k == second) break;
+            }
+            for (std::size_t k = second;; k = (k + 1U) % count) {
+                two.push_back(piece[k]);
+                if (k == first) break;
+            }
+            facePieces[pieceIndex] = std::move(one);
+            facePieces.push_back(std::move(two));
+            cutPairs.emplace_back(a, b);
+        }
+        if (!placed) {
+            if (error) *error = "Knife path crosses itself inside a face";
+            return std::nullopt;
+        }
+    }
+
+    // A chord leaving a non-convex face would flip one of the pieces.
+    for (const auto& [faceId, facePieces] : pieces) {
+        if (facePieces.size() < 2U) continue;
+        const auto original = faceNormal(faceId);
+        if (!original) continue;
+        for (const auto& piece : facePieces) {
+            std::vector<Vec3> positions;
+            positions.reserve(piece.size());
+            for (const auto id : piece) positions.push_back(working.findVertex(id)->position);
+            const auto normal = polygonNormal(positions);
+            if (!normal) {
+                if (error) *error = "Knife cut would create a sliver face; cut farther from the vertex";
+                return std::nullopt;
+            }
+            if (vecDot(*normal, *original) <= 0.0F) {
+                if (error) *error = "Knife cut leaves the face; cut convex faces or add points";
+                return std::nullopt;
+            }
+        }
+    }
+
+    for (const auto faceId : affected) {
+        if (!working.removeFace(faceId, error)) return std::nullopt;
+    }
+    for (const auto& [_, facePieces] : pieces) {
+        for (const auto& piece : facePieces) {
+            const auto face = working.addFace(piece, error);
+            if (!face) return std::nullopt;
+            if (!working.faceNormal(*face)) {
+                if (error) *error = "Knife cut generated a degenerate face";
+                return std::nullopt;
+            }
+        }
+    }
+    if (!working.validate(error)) return std::nullopt;
+
+    std::set<EditableEdgeId> cutEdges;
+    for (const auto& [a, b] : cutPairs) {
+        const auto found = working.directedEdges_.find(DirectedEdgeKey{a.value, b.value});
+        if (found == working.directedEdges_.end()) continue;
+        cutEdges.insert(working.findHalfEdge(found->second)->edge);
+    }
+    result.edges.assign(cutEdges.begin(), cutEdges.end());
     *this = std::move(working);
     if (error) error->clear();
     return result;

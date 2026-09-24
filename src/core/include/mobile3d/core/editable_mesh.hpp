@@ -84,6 +84,29 @@ struct EditableBevelResult final {
     std::vector<EditableVertexId> vertices;
 };
 
+// One point of a knife path on the surface: an existing vertex, or a point on an edge at
+// parameter `t` measured from `from` (one of the edge's endpoints) toward the other endpoint.
+// A default-constructed point separates independent runs of the same cut.
+struct EditableKnifePoint final {
+    EditableVertexId vertex{};
+    EditableEdgeId edge{};
+    EditableVertexId from{};
+    float t{0.0F};
+
+    [[nodiscard]] static constexpr EditableKnifePoint atVertex(EditableVertexId id) noexcept {
+        return EditableKnifePoint{id, {}, {}, 0.0F};
+    }
+    [[nodiscard]] static constexpr EditableKnifePoint onEdge(EditableEdgeId id, EditableVertexId start,
+                                                             float parameter) noexcept {
+        return EditableKnifePoint{{}, id, start, parameter};
+    }
+};
+
+struct EditableKnifeResult final {
+    std::vector<EditableVertexId> vertices; // vertices created where the path crossed edges
+    std::vector<EditableEdgeId> edges;      // cut edges that now split the crossed faces
+};
+
 class EditableMesh final {
 public:
     EditableMesh() = default;
@@ -138,6 +161,8 @@ public:
     [[nodiscard]] std::optional<EditableBevelResult> bevelEdges(
         std::span<const EditableEdgeId> edges, float width, std::uint32_t segments = 1U,
         std::string* error = nullptr);
+    [[nodiscard]] std::optional<EditableKnifeResult> knifeCut(
+        std::span<const EditableKnifePoint> path, std::string* error = nullptr);
     [[nodiscard]] bool deleteFaces(std::span<const EditableFaceId> faces,
                                    std::string* error = nullptr);
     [[nodiscard]] bool deleteEdges(std::span<const EditableEdgeId> edges,

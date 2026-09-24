@@ -103,4 +103,99 @@ std::optional<MeshScreenPickResult> MeshScreenPicker::pick(
     return best;
 }
 
+std::vector<EditableKnifePoint> MeshScreenPicker::planKnifeStroke(
+    std::span<const MeshScreenEdge> edges,
+    std::span<const MeshScreenFace> faces,
+    const MeshKnifeStrokeRequest& request) {
+    struct Crossing final {
+        float order{0.0F};
+        EditableKnifePoint point{};
+        EditableVertexId first{};
+        EditableVertexId second{};
+        float x{0.0F};
+        float y{0.0F};
+    };
+    const auto& stroke = request.stroke;
+    if (stroke.size() < 2U || !std::isfinite(request.vertexSnapRadius)) return {};
+    const float snap = std::max(request.vertexSnapRadius, 0.0F);
+
+    std::vector<Crossing> crossings;
+    for (std::size_t segment = 0; segment + 1U < stroke.size(); ++segment) {
+        const auto& start = stroke[segment];
+        const auto& end = stroke[segment + 1U];
+        if (!finitePoint(start) || !finitePoint(end)) continue;
+        const float rx = end.x - start.x;
+        const float ry = end.y - start.y;
+        if (rx * rx + ry * ry <= 1.0e-8F) continue;
+        // Stroke joints belong to the following segment, except at the very end of the stroke.
+        const bool lastSegment = segment + 2U == stroke.size();
+        for (const auto& edge : edges) {
+            if (edge.id.isNull() || edge.firstVertex.isNull() || edge.secondVertex.isNull() ||
+                !finitePoint(edge.first) || !finitePoint(edge.second)) continue;
+            const float qx = edge.second.x - edge.first.x;
+            const float qy = edge.second.y - edge.first.y;
+            const float denominator = rx * qy - ry * qx;
+            if (std::abs(denominator) <= 1.0e-9F) continue;
+            const float wx = edge.first.x - start.x;
+            const float wy = edge.first.y - start.y;
+            const float s = (wx * qy - wy * qx) / denominator;
+            const float u = (wx * ry - wy * rx) / denominator;
+            if (s < 0.0F || (lastSegment ? s > 1.0F : s >= 1.0F) || u < 0.0F || u > 1.0F) continue;
+            const float x = start.x + rx * s;
+            const float y = start.y + ry * s;
+            const float depth = edge.first.depth + (edge.second.depth - edge.first.depth) * u;
+            if (depth < 0.0F || depth > 1.0F ||
+                occluded(depth, frontFaceAt(faces, x, y), request.occlusionDepthEpsilon)) continue;
+
+            Crossing crossing{static_cast<float>(segment) + s, {}, edge.firstVertex, edge.secondVertex, x, y};
+            const float toFirst = std::sqrt(squaredDistance(x, y, edge.first.x, edge.first.y));
+            const float toSecond = std::sqrt(squaredDistance(x, y, edge.second.x, edge.second.y));
+            if (std::min(toFirst, toSecond) <= snap) {
+                crossing.point = EditableKnifePoint::atVertex(toFirst <= toSecond ? edge.firstVertex
+                                                                                   : edge.secondVertex);
+            } else {
+                // 1/w is affine in screen space, so the 3D parameter follows from its interpolation.
+                const float firstWeight = (1.0F - u) * edge.first.inverseW;
+                const float secondWeight = u * edge.second.inverseW;
+                const float total = firstWeight + secondWeight;
+                const float t = std::isfinite(total) && total > 1.0e-12F ? secondWeight / total : u;
+                crossing.point = EditableKnifePoint::onEdge(edge.id, edge.firstVertex, std::clamp(t, 0.0F, 1.0F));
+            }
+            crossings.push_back(crossing);
+        }
+    }
+    std::stable_sort(crossings.begin(), crossings.end(),
+                     [](const Crossing& left, const Crossing& right) { return left.order < right.order; });
+
+    const auto containsCrossing = [](const MeshScreenFace& face, const Crossing& crossing) {
+        const auto has = [&face](EditableVertexId id) {
+            return std::find(face.vertexIds.begin(), face.vertexIds.end(), id) != face.vertexIds.end();
+        };
+        if (!crossing.point.vertex.isNull()) return has(crossing.point.vertex);
+        return has(crossing.first) && has(crossing.second);
+    };
+    std::vector<EditableKnifePoint> path;
+    const Crossing* previous = nullptr;
+    for (const auto& crossing : crossings) {
+        if (previous) {
+            if (!crossing.point.vertex.isNull() && crossing.point.vertex == previous->point.vertex) continue;
+            // Consecutive crossings are joined only across a visible face that holds both.
+            const auto front = frontFaceAt(faces, (previous->x + crossing.x) * 0.5F,
+                                           (previous->y + crossing.y) * 0.5F);
+            bool joined = front.has_value();
+            if (front) {
+                for (const auto& face : faces) {
+                    if (face.id != front->face || face.vertexIds.empty()) continue;
+                    joined = containsCrossing(face, *previous) && containsCrossing(face, crossing);
+                    break;
+                }
+            }
+            if (!joined) path.push_back(EditableKnifePoint{});
+        }
+        path.push_back(crossing.point);
+        previous = &crossing;
+    }
+    return path;
+}
+
 } // namespace m3d
