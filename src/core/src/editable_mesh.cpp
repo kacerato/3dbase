@@ -243,6 +243,32 @@ EditableVertexId EditableMesh::destination(EditableHalfEdgeId id) const noexcept
     return next ? next->origin : EditableVertexId{};
 }
 
+EditableHalfEdgeId EditableMesh::previousHalfEdge(EditableHalfEdgeId id) const noexcept {
+    EditableHalfEdgeId current = id;
+    for (std::size_t step = 0; step <= halfEdges_.size(); ++step) {
+        const auto* halfEdge = findHalfEdge(current);
+        if (!halfEdge) return {};
+        if (halfEdge->next == id) return current;
+        current = halfEdge->next;
+    }
+    return {};
+}
+
+bool EditableMesh::removeIsolatedVertex(EditableVertexId vertexId, std::string* error) {
+    auto* vertex = findVertex(vertexId);
+    if (!vertex) {
+        if (error) *error = "Editable vertex to remove does not exist";
+        return false;
+    }
+    if (!vertex->outgoing.isNull()) {
+        if (error) *error = "Editable vertex is still referenced by topology";
+        return false;
+    }
+    vertices_[static_cast<std::size_t>(vertexId.value - 1U)].reset();
+    --vertexCount_;
+    return true;
+}
+
 EditableHalfEdgeId EditableMesh::allocateHalfEdge() {
     const auto value = static_cast<std::uint32_t>(halfEdges_.size() + 1U);
     const EditableHalfEdgeId id{value};
@@ -299,9 +325,14 @@ bool EditableMesh::validate(std::string* error) const {
         if (!value) continue;
         ++actualHalfEdges;
         const auto& halfEdge = *value;
-        if (!findVertex(halfEdge.origin) || !findHalfEdge(halfEdge.next) ||
+        const auto* origin = findVertex(halfEdge.origin);
+        if (!origin || !findHalfEdge(halfEdge.next) ||
             !findEdge(halfEdge.edge) || !findFace(halfEdge.face)) {
             if (error) *error = "Editable half-edge references a missing element";
+            return false;
+        }
+        if (origin->outgoing.isNull()) {
+            if (error) *error = "Editable vertex is referenced but has no outgoing half-edge";
             return false;
         }
         if (!halfEdge.twin.isNull()) {

@@ -657,8 +657,10 @@ TEST_CASE("single edge bevel creates a valid chamfer on valence three manifold t
     REQUIRE(mesh.edgeCount() == 15U);
     REQUIRE(mesh.halfEdgeCount() == 30U);
     REQUIRE(mesh.faceCount() == 7U);
-    REQUIRE(mesh.findFace(result->bevelFace) != nullptr);
-    REQUIRE(mesh.faceVertices(result->bevelFace).size() == 4U);
+    REQUIRE(result->faces.size() == 1U);
+    REQUIRE(mesh.findFace(result->faces.front()) != nullptr);
+    REQUIRE(mesh.faceVertices(result->faces.front()).size() == 4U);
+    REQUIRE(result->vertices.size() == 4U);
     for (const auto vertex : result->vertices) REQUIRE(mesh.findVertex(vertex) != nullptr);
 
     m3d::MeshResource render;

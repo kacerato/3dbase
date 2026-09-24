@@ -220,13 +220,23 @@ Rectangle {
                 return (value / 100.0).toFixed(2)
             }
         }
+        SpinBox {
+            id: bevelSegments
+            height: 38
+            width: 78
+            visible: root.controller.editMode && root.controller.meshSelectionMode === "Edge"
+            from: 1
+            to: 16
+            value: 1
+            editable: false
+        }
         Button {
             height: 38
             visible: root.controller.editMode
-            text: "Bevel " + (bevelWidth.value / 100.0).toFixed(2)
+            text: "Bevel " + (bevelWidth.value / 100.0).toFixed(2) + " ×" + bevelSegments.value
             enabled: root.controller.meshSelectionMode === "Edge"
-                     && root.controller.selectedMeshElementCount === 1
-            onClicked: root.controller.bevelSelectedEdge(bevelWidth.value / 100.0)
+                     && root.controller.selectedMeshElementCount >= 1
+            onClicked: root.controller.bevelSelectedEdges(bevelWidth.value / 100.0, bevelSegments.value)
         }
         Button {
             height: 38

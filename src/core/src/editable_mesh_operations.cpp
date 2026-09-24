@@ -129,6 +129,77 @@ struct BoundaryArc final {
     return x * x + y * y + z * z;
 }
 
+[[nodiscard]] Vec3 vecAdd(Vec3 left, Vec3 right) noexcept {
+    return Vec3{left.x + right.x, left.y + right.y, left.z + right.z};
+}
+
+[[nodiscard]] Vec3 vecSub(Vec3 left, Vec3 right) noexcept {
+    return Vec3{left.x - right.x, left.y - right.y, left.z - right.z};
+}
+
+[[nodiscard]] Vec3 vecScale(Vec3 value, float factor) noexcept {
+    return Vec3{value.x * factor, value.y * factor, value.z * factor};
+}
+
+[[nodiscard]] float vecDot(Vec3 left, Vec3 right) noexcept {
+    return left.x * right.x + left.y * right.y + left.z * right.z;
+}
+
+[[nodiscard]] Vec3 vecCross(Vec3 left, Vec3 right) noexcept {
+    return Vec3{left.y * right.z - left.z * right.y,
+                left.z * right.x - left.x * right.z,
+                left.x * right.y - left.y * right.x};
+}
+
+[[nodiscard]] float vecLength(Vec3 value) noexcept { return std::sqrt(vecDot(value, value)); }
+
+[[nodiscard]] std::optional<Vec3> vecNormalized(Vec3 value) noexcept {
+    const float length = vecLength(value);
+    if (!std::isfinite(length) || length <= 1.0e-6F) return std::nullopt;
+    return vecScale(value, 1.0F / length);
+}
+
+[[nodiscard]] Vec3 vecCentroid(std::span<const Vec3> positions) noexcept {
+    Vec3 sum{};
+    for (const auto position : positions) sum = vecAdd(sum, position);
+    return positions.empty() ? sum : vecScale(sum, 1.0F / static_cast<float>(positions.size()));
+}
+
+// Newell normal of a (possibly non-planar) polygon; nullopt when the polygon has no area.
+[[nodiscard]] std::optional<Vec3> polygonNormal(std::span<const Vec3> positions) noexcept {
+    if (positions.size() < 3U) return std::nullopt;
+    Vec3 normal{};
+    for (std::size_t i = 0; i < positions.size(); ++i) {
+        const Vec3& current = positions[i];
+        const Vec3& next = positions[(i + 1U) % positions.size()];
+        normal.x += (current.y - next.y) * (current.z + next.z);
+        normal.y += (current.z - next.z) * (current.x + next.x);
+        normal.z += (current.x - next.x) * (current.y + next.y);
+    }
+    return vecNormalized(normal);
+}
+
+// Weight of the rational quadratic Bezier whose control point is the original sharp corner.
+// sin(phi / 2) turns the profile into an exact circular arc when both rails are equidistant
+// from the corner, and degrades smoothly to a straight chamfer as the corner flattens.
+[[nodiscard]] float bevelProfileWeight(Vec3 from, Vec3 to, Vec3 corner) noexcept {
+    const auto toFrom = vecNormalized(vecSub(from, corner));
+    const auto toTo = vecNormalized(vecSub(to, corner));
+    if (!toFrom || !toTo) return 1.0F;
+    return std::sqrt(std::clamp((1.0F - vecDot(*toFrom, *toTo)) * 0.5F, 0.0F, 1.0F));
+}
+
+// Removes consecutive (cyclic) repeats produced where a bevel profile collapses onto a kept vertex.
+[[nodiscard]] std::vector<EditableVertexId> compactLoop(std::vector<EditableVertexId> loop) {
+    std::vector<EditableVertexId> compact;
+    compact.reserve(loop.size());
+    for (const auto vertex : loop) {
+        if (compact.empty() || compact.back() != vertex) compact.push_back(vertex);
+    }
+    while (compact.size() > 1U && compact.front() == compact.back()) compact.pop_back();
+    return compact;
+}
+
 } // namespace
 
 bool EditableMesh::removeFace(EditableFaceId faceId, std::string* error) {
@@ -155,17 +226,27 @@ bool EditableMesh::removeFace(EditableFaceId faceId, std::string* error) {
         return false;
     }
 
-    std::vector<EditableVertexId> affectedVertices;
-    affectedVertices.reserve(loop.size());
-    for (const auto halfEdgeId : loop) {
-        const auto* halfEdge = findHalfEdge(halfEdgeId);
-        if (!halfEdge) return false;
-        const auto destinationId = destination(halfEdgeId);
+    // For every corner, remember the neighbouring outgoing half-edges that live in other faces
+    // so a corner whose outgoing half-edge disappears can be repaired locally instead of by a
+    // scan over every half-edge in the mesh.
+    struct CornerRepair final {
+        EditableVertexId vertex{};
+        std::array<EditableHalfEdgeId, 2> candidates{};
+    };
+    std::vector<CornerRepair> corners;
+    corners.reserve(loop.size());
+    for (std::size_t index = 0; index < loop.size(); ++index) {
+        const auto* halfEdge = findHalfEdge(loop[index]);
+        const auto* previous = findHalfEdge(loop[(index + loop.size() - 1U) % loop.size()]);
+        if (!halfEdge || !previous) return false;
+        const auto destinationId = destination(loop[index]);
         if (destinationId.isNull()) {
             if (error) *error = "Editable face contains an invalid half-edge destination";
             return false;
         }
-        affectedVertices.push_back(halfEdge->origin);
+        const auto* twin = halfEdge->twin.isNull() ? nullptr : findHalfEdge(halfEdge->twin);
+        corners.push_back(CornerRepair{
+            halfEdge->origin, {previous->twin, twin ? twin->next : EditableHalfEdgeId{}}});
         directedEdges_.erase(DirectedEdgeKey{halfEdge->origin.value, destinationId.value});
     }
 
@@ -204,13 +285,22 @@ bool EditableMesh::removeFace(EditableFaceId faceId, std::string* error) {
     faceSlot.reset();
     --faceCount_;
 
-    for (const auto vertexId : affectedVertices) {
-        auto* vertex = findVertex(vertexId);
+    for (const auto& corner : corners) {
+        auto* vertex = findVertex(corner.vertex);
         if (!vertex) continue;
         if (!vertex->outgoing.isNull() && findHalfEdge(vertex->outgoing)) continue;
         vertex->outgoing = {};
+        for (const auto candidateId : corner.candidates) {
+            const auto* candidate = findHalfEdge(candidateId);
+            if (candidate && candidate->origin == corner.vertex) {
+                vertex->outgoing = candidateId;
+                break;
+            }
+        }
+        if (!vertex->outgoing.isNull()) continue;
+        // Boundary corners (or non-manifold fans) can have no local survivor; fall back to a scan.
         for (const auto& candidate : halfEdges_) {
-            if (!candidate || candidate->origin != vertexId) continue;
+            if (!candidate || candidate->origin != corner.vertex) continue;
             vertex->outgoing = candidate->id;
             break;
         }
@@ -437,23 +527,7 @@ std::optional<EditableVertexId> EditableMesh::mergeVertices(
     }
 
     for (const auto source : sources) {
-        for (const auto& halfEdge : working.halfEdges()) {
-            if (halfEdge.origin == source || working.destination(halfEdge.id) == source) {
-                if (error) *error = "Merge source is still referenced after removing incident faces";
-                return std::nullopt;
-            }
-        }
-        if (source.isNull() || static_cast<std::size_t>(source.value) > working.vertices_.size()) {
-            if (error) *error = "Merge source vertex slot is invalid";
-            return std::nullopt;
-        }
-        auto& slot = working.vertices_[static_cast<std::size_t>(source.value - 1U)];
-        if (!slot) {
-            if (error) *error = "Merge source vertex disappeared unexpectedly";
-            return std::nullopt;
-        }
-        slot.reset();
-        --working.vertexCount_;
+        if (!working.removeIsolatedVertex(source, error)) return std::nullopt;
     }
 
     for (const auto& face : affected) {
@@ -1329,222 +1403,396 @@ std::optional<EditableLoopCutResult> EditableMesh::loopCut(
 
 std::optional<EditableBevelResult> EditableMesh::bevelEdge(
     EditableEdgeId edgeId, float width, std::string* error) {
+    const std::array<EditableEdgeId, 1> edgesToBevel{edgeId};
+    return bevelEdges(edgesToBevel, width, 1U, error);
+}
+
+// Vertex-split bevel. Every endpoint of a beveled edge is analysed through its ordered face
+// fan (h_{i+1} = twin(prev(h_i)), face f_i lies between edges e_i and e_{i+1}):
+//  * one beveled edge (terminal): the corner slides along the two fan neighbours of the edge.
+//    Valence 3 caps the bevel with the remaining face; higher valences keep the vertex and the
+//    strip tapers into it.
+//  * two or more beveled edges: the beveled edges split the fan into sectors and the vertex is
+//    replaced by one new vertex per sector. Where three or more beveled edges meet, the hole
+//    left between the sector vertices is closed with a corner patch.
+// Each beveled edge becomes a strip of `segments` faces whose cross-section follows a rational
+// quadratic profile controlled by the original corner.
+std::optional<EditableBevelResult> EditableMesh::bevelEdges(
+    std::span<const EditableEdgeId> selectedEdges, float width, std::uint32_t segments,
+    std::string* error) {
     if (!std::isfinite(width) || width <= 1.0e-6F) {
         if (error) *error = "Bevel width must be finite and positive";
         return std::nullopt;
     }
-    const auto* edge = findEdge(edgeId);
-    const auto* firstHalfEdge = edge ? findHalfEdge(edge->halfEdge) : nullptr;
-    const auto* firstNext = firstHalfEdge ? findHalfEdge(firstHalfEdge->next) : nullptr;
-    const auto* secondHalfEdge = firstHalfEdge && !firstHalfEdge->twin.isNull()
-        ? findHalfEdge(firstHalfEdge->twin) : nullptr;
-    const auto* secondNext = secondHalfEdge ? findHalfEdge(secondHalfEdge->next) : nullptr;
-    if (!edge || !firstHalfEdge || !firstNext || !secondHalfEdge || !secondNext) {
-        if (error) *error = "Bevel baseline requires a closed manifold edge";
+    if (segments == 0U || segments > kMaximumBevelSegments) {
+        if (error) *error = "Bevel segments must be between 1 and 16";
+        return std::nullopt;
+    }
+    const std::set<EditableEdgeId> beveled(selectedEdges.begin(), selectedEdges.end());
+    if (beveled.empty()) {
+        if (error) *error = "Bevel requires at least one selected edge";
         return std::nullopt;
     }
 
-    const EditableVertexId a = firstHalfEdge->origin;
-    const EditableVertexId b = firstNext->origin;
-    if (secondHalfEdge->origin != b || secondNext->origin != a) {
-        if (error) *error = "Bevel edge twin orientation is inconsistent";
-        return std::nullopt;
-    }
-    const EditableFaceId firstFace = firstHalfEdge->face;
-    const EditableFaceId secondFace = secondHalfEdge->face;
-    const auto firstLoop = faceVertices(firstFace);
-    const auto secondLoop = faceVertices(secondFace);
-    if (firstLoop.size() < 3U || secondLoop.size() < 3U) {
-        if (error) *error = "Bevel requires non-degenerate incident faces";
-        return std::nullopt;
-    }
-
-    const auto findDirectedIndex = [](const std::vector<EditableVertexId>& loop,
-                                      EditableVertexId from, EditableVertexId to)
-        -> std::optional<std::size_t> {
-        for (std::size_t index = 0; index < loop.size(); ++index) {
-            if (loop[index] == from && loop[(index + 1U) % loop.size()] == to) return index;
-        }
-        return std::nullopt;
-    };
-    const auto firstIndex = findDirectedIndex(firstLoop, a, b);
-    const auto secondIndex = findDirectedIndex(secondLoop, b, a);
-    if (!firstIndex || !secondIndex) {
-        if (error) *error = "Bevel could not locate the selected edge in both incident faces";
-        return std::nullopt;
-    }
-
-    const EditableVertexId aNeighborFirst =
-        firstLoop[(*firstIndex + firstLoop.size() - 1U) % firstLoop.size()];
-    const EditableVertexId bNeighborFirst = firstLoop[(*firstIndex + 2U) % firstLoop.size()];
-    const EditableVertexId bNeighborSecond =
-        secondLoop[(*secondIndex + secondLoop.size() - 1U) % secondLoop.size()];
-    const EditableVertexId aNeighborSecond = secondLoop[(*secondIndex + 2U) % secondLoop.size()];
-
-    const auto incidentFaces = [this](EditableVertexId vertexId) {
-        std::set<EditableFaceId> result;
-        for (const auto& face : faces()) {
-            const auto loop = faceVertices(face.id);
-            if (std::find(loop.cbegin(), loop.cend(), vertexId) != loop.cend()) result.insert(face.id);
-        }
-        return result;
-    };
-    auto aFaces = incidentFaces(a);
-    auto bFaces = incidentFaces(b);
-    if (aFaces.size() != 3U || bFaces.size() != 3U) {
-        if (error) *error = "Bevel baseline currently requires valence-3 edge endpoints";
-        return std::nullopt;
-    }
-    aFaces.erase(firstFace); aFaces.erase(secondFace);
-    bFaces.erase(firstFace); bFaces.erase(secondFace);
-    if (aFaces.size() != 1U || bFaces.size() != 1U || *aFaces.begin() == *bFaces.begin()) {
-        if (error) *error = "Bevel could not resolve unique endpoint cap faces";
-        return std::nullopt;
-    }
-    const EditableFaceId aCapFace = *aFaces.begin();
-    const EditableFaceId bCapFace = *bFaces.begin();
-    const auto aCapLoop = faceVertices(aCapFace);
-    const auto bCapLoop = faceVertices(bCapFace);
-
-    const auto* aVertex = findVertex(a);
-    const auto* bVertex = findVertex(b);
-    const auto* aFirstNeighborVertex = findVertex(aNeighborFirst);
-    const auto* aSecondNeighborVertex = findVertex(aNeighborSecond);
-    const auto* bFirstNeighborVertex = findVertex(bNeighborFirst);
-    const auto* bSecondNeighborVertex = findVertex(bNeighborSecond);
-    if (!aVertex || !bVertex || !aFirstNeighborVertex || !aSecondNeighborVertex ||
-        !bFirstNeighborVertex || !bSecondNeighborVertex) {
-        if (error) *error = "Bevel references a missing adjacent vertex";
-        return std::nullopt;
-    }
-
-    const auto offsetToward = [width, error](Vec3 origin, Vec3 target) -> std::optional<Vec3> {
-        const float dx = target.x - origin.x;
-        const float dy = target.y - origin.y;
-        const float dz = target.z - origin.z;
-        const float length = std::sqrt(dx * dx + dy * dy + dz * dz);
-        if (!std::isfinite(length) || length <= 1.0e-7F) {
-            if (error) *error = "Bevel encountered a zero-length adjacent edge";
+    std::set<EditableVertexId> endpoints;
+    for (const auto edgeId : beveled) {
+        const auto* edge = findEdge(edgeId);
+        const auto* halfEdge = edge ? findHalfEdge(edge->halfEdge) : nullptr;
+        if (!edge || !halfEdge) {
+            if (error) *error = "Bevel selection contains a missing edge";
             return std::nullopt;
         }
-        if (width >= length * 0.49F) {
-            if (error) *error = "Bevel width is too large for the local edge neighborhood";
+        if (halfEdge->twin.isNull()) {
+            if (error) *error = "Bevel requires closed manifold edges; boundary bevel is not supported yet";
             return std::nullopt;
         }
-        const float factor = width / length;
-        return Vec3{origin.x + dx * factor, origin.y + dy * factor, origin.z + dz * factor};
-    };
-    const auto aFirstPosition = offsetToward(aVertex->position, aFirstNeighborVertex->position);
-    const auto aSecondPosition = offsetToward(aVertex->position, aSecondNeighborVertex->position);
-    const auto bFirstPosition = offsetToward(bVertex->position, bFirstNeighborVertex->position);
-    const auto bSecondPosition = offsetToward(bVertex->position, bSecondNeighborVertex->position);
-    if (!aFirstPosition || !aSecondPosition || !bFirstPosition || !bSecondPosition) return std::nullopt;
-
-    EditableMesh working = *this;
-    const EditableVertexId aFirst = working.addVertex(*aFirstPosition);
-    const EditableVertexId aSecond = working.addVertex(*aSecondPosition);
-    const EditableVertexId bFirst = working.addVertex(*bFirstPosition);
-    const EditableVertexId bSecond = working.addVertex(*bSecondPosition);
-
-    const auto replaceSimple = [](const std::vector<EditableVertexId>& loop,
-                                  EditableVertexId firstOld, EditableVertexId firstNew,
-                                  EditableVertexId secondOld, EditableVertexId secondNew) {
-        auto result = loop;
-        for (auto& vertex : result) {
-            if (vertex == firstOld) vertex = firstNew;
-            else if (vertex == secondOld) vertex = secondNew;
-        }
-        return result;
-    };
-    const auto expandEndpoint = [error](const std::vector<EditableVertexId>& loop,
-                                        EditableVertexId endpoint,
-                                        EditableVertexId neighborOne, EditableVertexId replacementOne,
-                                        EditableVertexId neighborTwo, EditableVertexId replacementTwo)
-        -> std::optional<std::vector<EditableVertexId>> {
-        const auto found = std::find(loop.cbegin(), loop.cend(), endpoint);
-        if (found == loop.cend()) {
-            if (error) *error = "Bevel endpoint cap face does not contain its endpoint";
-            return std::nullopt;
-        }
-        const std::size_t index = static_cast<std::size_t>(std::distance(loop.cbegin(), found));
-        const EditableVertexId previous = loop[(index + loop.size() - 1U) % loop.size()];
-        const EditableVertexId next = loop[(index + 1U) % loop.size()];
-        const auto replacementFor = [&](EditableVertexId neighbor) -> EditableVertexId {
-            if (neighbor == neighborOne) return replacementOne;
-            if (neighbor == neighborTwo) return replacementTwo;
-            return {};
-        };
-        const EditableVertexId firstReplacement = replacementFor(previous);
-        const EditableVertexId secondReplacement = replacementFor(next);
-        if (firstReplacement.isNull() || secondReplacement.isNull() ||
-            firstReplacement == secondReplacement) {
-            if (error) *error = "Bevel endpoint cap adjacency is not valence-3 manifold topology";
-            return std::nullopt;
-        }
-        std::vector<EditableVertexId> result;
-        result.reserve(loop.size() + 1U);
-        for (std::size_t loopIndex = 0; loopIndex < loop.size(); ++loopIndex) {
-            if (loopIndex != index) result.push_back(loop[loopIndex]);
-            else {
-                result.push_back(firstReplacement);
-                result.push_back(secondReplacement);
-            }
-        }
-        return result;
-    };
-
-    const auto rebuiltFirst = replaceSimple(firstLoop, a, aFirst, b, bFirst);
-    const auto rebuiltSecond = replaceSimple(secondLoop, b, bSecond, a, aSecond);
-    const auto rebuiltACap = expandEndpoint(aCapLoop, a,
-                                             aNeighborFirst, aFirst,
-                                             aNeighborSecond, aSecond);
-    const auto rebuiltBCap = expandEndpoint(bCapLoop, b,
-                                             bNeighborFirst, bFirst,
-                                             bNeighborSecond, bSecond);
-    if (!rebuiltACap || !rebuiltBCap) return std::nullopt;
-
-    const std::array<EditableFaceId, 4> affectedFaces{
-        firstFace, secondFace, aCapFace, bCapFace
-    };
-    for (const auto face : affectedFaces) {
-        if (!working.removeFace(face, error)) return std::nullopt;
+        endpoints.insert(halfEdge->origin);
+        endpoints.insert(destination(halfEdge->id));
     }
 
-    for (const auto originalVertex : std::array<EditableVertexId, 2>{a, b}) {
-        for (const auto& halfEdge : working.halfEdges()) {
-            if (halfEdge.origin == originalVertex || working.destination(halfEdge.id) == originalVertex) {
-                if (error) *error = "Bevel endpoint remained referenced after removing its valence-3 fan";
+    struct VertexFan final {
+        std::vector<EditableFaceId> faces;
+        std::vector<EditableEdgeId> edges;
+        std::vector<Vec3> directions;
+        std::vector<float> lengths;
+        std::vector<std::size_t> beveledSlots;
+    };
+    // Cross-section of one beveled edge at one endpoint. Rails run from the face before the
+    // edge in fan order to the face after it; gaps[s] holds vertices inserted between rails
+    // s and s + 1 (in that direction).
+    struct EndProfile final {
+        std::vector<EditableVertexId> rails;
+        std::vector<std::vector<EditableVertexId>> gaps;
+    };
+    struct VertexPlan final {
+        bool keepOriginal{false};
+        std::map<EditableFaceId, std::vector<EditableVertexId>> corners;
+        std::map<EditableEdgeId, EndProfile> profiles;
+        std::vector<EditableVertexId> patchRing;
+        EditableVertexId patchCenter{};
+    };
+
+    const auto buildFan = [this, &beveled, error](EditableVertexId vertexId) -> std::optional<VertexFan> {
+        const auto* vertex = findVertex(vertexId);
+        if (!vertex || vertex->outgoing.isNull()) {
+            if (error) *error = "Bevel endpoint has no incident faces";
+            return std::nullopt;
+        }
+        VertexFan fan;
+        const EditableHalfEdgeId start = vertex->outgoing;
+        EditableHalfEdgeId current = start;
+        for (std::size_t step = 0; step <= halfEdgeCount_; ++step) {
+            const auto* halfEdge = findHalfEdge(current);
+            const auto* farVertex = halfEdge ? findVertex(destination(current)) : nullptr;
+            if (!halfEdge || !farVertex || halfEdge->origin != vertexId) {
+                if (error) *error = "Bevel vertex fan is inconsistent";
                 return std::nullopt;
             }
+            const Vec3 delta = vecSub(farVertex->position, vertex->position);
+            const float length = vecLength(delta);
+            if (!std::isfinite(length) || length <= 1.0e-7F) {
+                if (error) *error = "Bevel encountered a zero-length adjacent edge";
+                return std::nullopt;
+            }
+            if (beveled.contains(halfEdge->edge)) fan.beveledSlots.push_back(fan.faces.size());
+            fan.faces.push_back(halfEdge->face);
+            fan.edges.push_back(halfEdge->edge);
+            fan.directions.push_back(vecScale(delta, 1.0F / length));
+            fan.lengths.push_back(length);
+
+            const auto* previous = findHalfEdge(previousHalfEdge(current));
+            if (!previous || previous->twin.isNull()) {
+                if (error) *error = "Bevel vertices must be interior; boundary bevel is not supported yet";
+                return std::nullopt;
+            }
+            current = previous->twin;
+            if (current == start) break;
         }
-        auto& slot = working.vertices_[static_cast<std::size_t>(originalVertex.value - 1U)];
-        if (!slot) {
-            if (error) *error = "Bevel endpoint vertex slot disappeared unexpectedly";
+        if (current != start || fan.faces.size() < 3U) {
+            if (error) *error = "Bevel requires closed vertex fans with at least three faces";
             return std::nullopt;
         }
-        slot.reset();
-        --working.vertexCount_;
+        return fan;
+    };
+
+    // Offsets must stay within 49% of every edge they travel along so that slides arriving
+    // from both ends of the same edge can never cross.
+    const auto withinNeighborhood = [error](const VertexFan& fan, std::size_t slot, Vec3 offset) {
+        if (vecDot(offset, fan.directions[slot]) < fan.lengths[slot] * 0.49F) return true;
+        if (error) *error = "Bevel width is too large for the local edge neighborhood";
+        return false;
+    };
+
+    EditableMesh working = *this;
+    EditableBevelResult result;
+    const auto addBevelVertex = [&working, &result](Vec3 position) {
+        const EditableVertexId id = working.addVertex(position);
+        result.vertices.push_back(id);
+        return id;
+    };
+    const auto positionOf = [&working](EditableVertexId id) { return working.findVertex(id)->position; };
+    const auto profileRails = [&addBevelVertex, &positionOf, segments](
+                                  EditableVertexId from, EditableVertexId to, Vec3 corner) {
+        const Vec3 fromPosition = positionOf(from);
+        const Vec3 toPosition = positionOf(to);
+        const float weight = bevelProfileWeight(fromPosition, toPosition, corner);
+        std::vector<EditableVertexId> rails{from};
+        for (std::uint32_t step = 1U; step < segments; ++step) {
+            const float t = static_cast<float>(step) / static_cast<float>(segments);
+            const float w0 = (1.0F - t) * (1.0F - t);
+            const float w1 = 2.0F * t * (1.0F - t) * weight;
+            const float w2 = t * t;
+            const Vec3 weighted = vecAdd(vecAdd(vecScale(fromPosition, w0), vecScale(corner, w1)),
+                                         vecScale(toPosition, w2));
+            rails.push_back(addBevelVertex(vecScale(weighted, 1.0F / (w0 + w1 + w2))));
+        }
+        rails.push_back(to);
+        return rails;
+    };
+
+    std::map<EditableVertexId, VertexPlan> plans;
+    for (const auto vertexId : endpoints) {
+        const auto fan = buildFan(vertexId);
+        if (!fan) return std::nullopt;
+        const Vec3 origin = findVertex(vertexId)->position;
+        const std::size_t valence = fan->faces.size();
+        const std::size_t beveledCount = fan->beveledSlots.size();
+        VertexPlan plan;
+
+        if (beveledCount == 1U) {
+            const std::size_t edgeSlot = fan->beveledSlots.front();
+            const std::size_t afterSlot = (edgeSlot + 1U) % valence;
+            const std::size_t beforeSlot = (edgeSlot + valence - 1U) % valence;
+            const Vec3 edgeDirection = fan->directions[edgeSlot];
+            const auto slideAlong = [&](std::size_t slot) -> std::optional<EditableVertexId> {
+                // Slide along the neighbouring edge until the point is `width` away from the
+                // beveled edge line (a plain offset of `width` when the edges are perpendicular).
+                const float sine = vecLength(vecCross(fan->directions[slot], edgeDirection));
+                if (sine < 1.0e-4F) {
+                    if (error) *error = "Bevel terminal edge is collinear with a neighbouring edge";
+                    return std::nullopt;
+                }
+                const Vec3 offset = vecScale(fan->directions[slot], width / sine);
+                if (!withinNeighborhood(*fan, slot, offset)) return std::nullopt;
+                return addBevelVertex(vecAdd(origin, offset));
+            };
+            const auto afterVertex = slideAlong(afterSlot);
+            const auto beforeVertex = afterVertex ? slideAlong(beforeSlot) : std::nullopt;
+            if (!afterVertex || !beforeVertex) return std::nullopt;
+
+            plan.corners[fan->faces[edgeSlot]] = {*afterVertex};
+            plan.corners[fan->faces[beforeSlot]] = {*beforeVertex};
+            EndProfile profile;
+            profile.gaps.resize(segments);
+            if (valence == 3U) {
+                // The only face not touching the edge caps the bevel with the full profile.
+                profile.rails = profileRails(*beforeVertex, *afterVertex, origin);
+                plan.corners[fan->faces[afterSlot]] = profile.rails;
+            } else {
+                // The slide points split the neighbouring edges and the strip tapers into the
+                // kept vertex, so the remaining faces of the fan are untouched.
+                plan.keepOriginal = true;
+                plan.corners[fan->faces[afterSlot]] = {vertexId, *afterVertex};
+                plan.corners[fan->faces[(edgeSlot + valence - 2U) % valence]] = {*beforeVertex, vertexId};
+                profile.rails.assign(static_cast<std::size_t>(segments) + 1U, vertexId);
+                profile.rails.front() = *beforeVertex;
+                profile.rails.back() = *afterVertex;
+                if (segments == 1U) profile.gaps.front() = {vertexId};
+            }
+            plan.profiles[fan->edges[edgeSlot]] = std::move(profile);
+        } else {
+            std::vector<EditableVertexId> sectorVertices(beveledCount);
+            for (std::size_t sector = 0; sector < beveledCount; ++sector) {
+                const std::size_t first = fan->beveledSlots[sector];
+                std::size_t last = fan->beveledSlots[(sector + 1U) % beveledCount];
+                if (last <= first) last += valence;
+                const Vec3 firstDirection = fan->directions[first];
+                const Vec3 lastDirection = fan->directions[last % valence];
+
+                Vec3 interiorSum{};
+                for (std::size_t slot = first + 1U; slot < last; ++slot) {
+                    interiorSum = vecAdd(interiorSum, fan->directions[slot % valence]);
+                }
+                auto direction = vecNormalized(interiorSum);
+                if (!direction) direction = vecNormalized(vecAdd(firstDirection, lastDirection));
+                if (!direction) {
+                    // Both beveled edges leave the corner in opposite directions inside a single
+                    // face: offset perpendicular to them, into that face.
+                    const EditableFaceId face = fan->faces[first];
+                    const auto normal = faceNormal(face);
+                    std::vector<Vec3> facePositions;
+                    for (const auto id : faceVertices(face)) facePositions.push_back(findVertex(id)->position);
+                    if (normal) direction = vecNormalized(vecCross(*normal, firstDirection));
+                    if (direction && vecDot(*direction, vecSub(vecCentroid(facePositions), origin)) < 0.0F) {
+                        direction = vecScale(*direction, -1.0F);
+                    }
+                }
+                const float firstSine = direction ? vecLength(vecCross(*direction, firstDirection)) : 0.0F;
+                const float lastSine = direction ? vecLength(vecCross(*direction, lastDirection)) : 0.0F;
+                if (firstSine < 1.0e-4F || lastSine < 1.0e-4F) {
+                    if (error) *error = "Bevel sector around a vertex is degenerate";
+                    return std::nullopt;
+                }
+                // Distance `width` from both bounding beveled edges (averaged when the sector
+                // direction is not their bisector).
+                const Vec3 offset =
+                    vecScale(*direction, 0.5F * (width / firstSine + width / lastSine));
+                for (std::size_t slot = first; slot <= last; ++slot) {
+                    if (!withinNeighborhood(*fan, slot % valence, offset)) return std::nullopt;
+                }
+                sectorVertices[sector] = addBevelVertex(vecAdd(origin, offset));
+                for (std::size_t slot = first; slot < last; ++slot) {
+                    plan.corners[fan->faces[slot % valence]] = {sectorVertices[sector]};
+                }
+            }
+
+            // The beveled edge at beveledSlots[j] separates sector j - 1 (before) from sector j.
+            const auto emptyGaps = std::vector<std::vector<EditableVertexId>>(segments);
+            if (beveledCount == 2U) {
+                // A chain passes through: both strips share one cross-section.
+                auto shared = profileRails(sectorVertices[0], sectorVertices[1], origin);
+                plan.profiles[fan->edges[fan->beveledSlots[1]]] = EndProfile{shared, emptyGaps};
+                std::reverse(shared.begin(), shared.end());
+                plan.profiles[fan->edges[fan->beveledSlots[0]]] = EndProfile{std::move(shared), emptyGaps};
+            } else {
+                for (std::size_t index = 0; index < beveledCount; ++index) {
+                    const std::size_t before = (index + beveledCount - 1U) % beveledCount;
+                    plan.profiles[fan->edges[fan->beveledSlots[index]]] = EndProfile{
+                        profileRails(sectorVertices[before], sectorVertices[index], origin), emptyGaps};
+                }
+                std::vector<Vec3> ringPositions;
+                float bulge = 0.0F;
+                for (std::size_t index = 0; index < beveledCount; ++index) {
+                    const auto& rails =
+                        plan.profiles[fan->edges[fan->beveledSlots[(index + 1U) % beveledCount]]].rails;
+                    plan.patchRing.insert(plan.patchRing.end(), rails.begin(), rails.end() - 1);
+                    const float weight = bevelProfileWeight(positionOf(rails.front()),
+                                                            positionOf(rails.back()), origin);
+                    bulge += weight / (1.0F + weight);
+                }
+                for (const auto id : plan.patchRing) ringPositions.push_back(positionOf(id));
+
+                bool planar = beveledCount == 3U && segments == 1U;
+                if (!planar && segments == 1U) {
+                    const auto normal = polygonNormal(ringPositions);
+                    const Vec3 centroid = vecCentroid(ringPositions);
+                    planar = normal.has_value();
+                    for (const auto position : ringPositions) {
+                        if (!normal) break;
+                        planar = planar && std::abs(vecDot(vecSub(position, centroid), *normal)) <=
+                                               1.0e-5F + 1.0e-3F * width;
+                    }
+                }
+                if (!planar) {
+                    // Non-planar rings are fanned around a centre pulled toward the original
+                    // corner by the same bulge as the profiles (flat when segments == 1).
+                    const Vec3 centroid = vecCentroid(ringPositions);
+                    const float pull = segments > 1U ? bulge / static_cast<float>(beveledCount) : 0.0F;
+                    plan.patchCenter = addBevelVertex(vecAdd(centroid, vecScale(vecSub(origin, centroid), pull)));
+                }
+            }
+        }
+        plans.emplace(vertexId, std::move(plan));
     }
 
-    const auto firstReplacementFace = working.addFace(rebuiltFirst, error);
-    const auto secondReplacementFace = firstReplacementFace ? working.addFace(rebuiltSecond, error) : std::nullopt;
-    const auto aCapReplacementFace = secondReplacementFace ? working.addFace(*rebuiltACap, error) : std::nullopt;
-    const auto bCapReplacementFace = aCapReplacementFace ? working.addFace(*rebuiltBCap, error) : std::nullopt;
-    const std::array<EditableVertexId, 4> bevelLoop{aFirst, aSecond, bSecond, bFirst};
-    const auto bevelFace = bCapReplacementFace ? working.addFace(bevelLoop, error) : std::nullopt;
-    if (!firstReplacementFace || !secondReplacementFace || !aCapReplacementFace ||
-        !bCapReplacementFace || !bevelFace) return std::nullopt;
-    if (!working.faceNormal(*bevelFace)) {
-        if (error) *error = "Bevel generated a degenerate chamfer face";
-        return std::nullopt;
+    struct RebuiltFace final {
+        EditableFaceId original{};
+        std::vector<EditableVertexId> loop;
+    };
+    std::set<EditableFaceId> affectedFaces;
+    for (const auto& entry : plans) {
+        for (const auto& corner : entry.second.corners) affectedFaces.insert(corner.first);
+    }
+    std::vector<RebuiltFace> rebuilt;
+    rebuilt.reserve(affectedFaces.size());
+    for (const auto faceId : affectedFaces) {
+        RebuiltFace face{faceId, {}};
+        for (const auto corner : faceVertices(faceId)) {
+            const std::vector<EditableVertexId>* replacement = nullptr;
+            if (const auto planned = plans.find(corner); planned != plans.end()) {
+                const auto found = planned->second.corners.find(faceId);
+                if (found != planned->second.corners.end()) replacement = &found->second;
+            }
+            if (replacement) {
+                face.loop.insert(face.loop.end(), replacement->begin(), replacement->end());
+            } else {
+                face.loop.push_back(corner);
+            }
+        }
+        face.loop = compactLoop(std::move(face.loop));
+        rebuilt.push_back(std::move(face));
+    }
+
+    for (const auto& face : rebuilt) {
+        if (!working.removeFace(face.original, error)) return std::nullopt;
+    }
+    for (const auto& [vertexId, plan] : plans) {
+        if (!plan.keepOriginal && !working.removeIsolatedVertex(vertexId, error)) return std::nullopt;
+    }
+
+    std::vector<EditableFaceId> createdFaces;
+    const auto addBevelFace = [&working, &createdFaces, error](const std::vector<EditableVertexId>& loop)
+        -> std::optional<EditableFaceId> {
+        const auto face = working.addFace(loop, error);
+        if (face) createdFaces.push_back(*face);
+        return face;
+    };
+    for (const auto& face : rebuilt) {
+        if (!addBevelFace(face.loop)) return std::nullopt;
+    }
+
+    for (const auto edgeId : beveled) {
+        const auto* halfEdge = findHalfEdge(findEdge(edgeId)->halfEdge);
+        const EndProfile& atStart = plans.at(halfEdge->origin).profiles.at(edgeId);
+        const EndProfile& atEnd = plans.at(destination(halfEdge->id)).profiles.at(edgeId);
+        const std::size_t count = segments;
+        for (std::size_t segment = 0; segment < count; ++segment) {
+            // Rail k at one end meets rail (segments - k) at the other: both lie in the same face.
+            std::vector<EditableVertexId> loop{atStart.rails[segment], atEnd.rails[count - segment]};
+            const auto& endGap = atEnd.gaps[count - segment - 1U];
+            loop.insert(loop.end(), endGap.rbegin(), endGap.rend());
+            loop.push_back(atEnd.rails[count - segment - 1U]);
+            loop.push_back(atStart.rails[segment + 1U]);
+            const auto& startGap = atStart.gaps[segment];
+            loop.insert(loop.end(), startGap.rbegin(), startGap.rend());
+            loop = compactLoop(std::move(loop));
+            // Both ends tapering into kept vertices collapse middle segments onto the original edge.
+            if (loop.size() < 3U) continue;
+            const auto face = addBevelFace(loop);
+            if (!face) return std::nullopt;
+            result.faces.push_back(*face);
+        }
+    }
+
+    for (const auto& [_, plan] : plans) {
+        if (plan.patchRing.empty()) continue;
+        if (plan.patchCenter.isNull()) {
+            const auto face = addBevelFace(plan.patchRing);
+            if (!face) return std::nullopt;
+            result.faces.push_back(*face);
+            continue;
+        }
+        for (std::size_t index = 0; index < plan.patchRing.size(); ++index) {
+            const std::vector<EditableVertexId> triangle{
+                plan.patchRing[index], plan.patchRing[(index + 1U) % plan.patchRing.size()], plan.patchCenter};
+            const auto face = addBevelFace(triangle);
+            if (!face) return std::nullopt;
+            result.faces.push_back(*face);
+        }
+    }
+
+    for (const auto face : createdFaces) {
+        if (!working.faceNormal(face)) {
+            if (error) *error = "Bevel generated a degenerate face; reduce the width";
+            return std::nullopt;
+        }
     }
     if (!working.validate(error)) return std::nullopt;
 
     *this = std::move(working);
     if (error) error->clear();
-    return EditableBevelResult{*bevelFace, {aFirst, aSecond, bSecond, bFirst}};
+    return result;
 }
-
 
 bool EditableMesh::deleteFaces(std::span<const EditableFaceId> facesToDelete,
                                std::string* error) {
@@ -1657,23 +1905,7 @@ bool EditableMesh::deleteVertices(std::span<const EditableVertexId> verticesToDe
     }
 
     for (const auto vertexId : unique) {
-        for (const auto& halfEdge : working.halfEdges()) {
-            if (halfEdge.origin == vertexId || working.destination(halfEdge.id) == vertexId) {
-                if (error) *error = "Delete Vertices left a selected vertex referenced by topology";
-                return false;
-            }
-        }
-        if (vertexId.isNull() || static_cast<std::size_t>(vertexId.value) > working.vertices_.size()) {
-            if (error) *error = "Delete Vertices encountered an invalid vertex slot";
-            return false;
-        }
-        auto& slot = working.vertices_[static_cast<std::size_t>(vertexId.value - 1U)];
-        if (!slot) {
-            if (error) *error = "Delete Vertices encountered an empty vertex slot";
-            return false;
-        }
-        slot.reset();
-        --working.vertexCount_;
+        if (!working.removeIsolatedVertex(vertexId, error)) return false;
     }
 
     if (!working.validate(error)) return false;

@@ -78,8 +78,10 @@ struct EditableLoopCutResult final {
 };
 
 struct EditableBevelResult final {
-    EditableFaceId bevelFace{};
-    std::array<EditableVertexId, 4> vertices{};
+    // New bevel surface: one face per profile segment of every beveled edge, plus the
+    // corner patches created where three or more beveled edges meet.
+    std::vector<EditableFaceId> faces;
+    std::vector<EditableVertexId> vertices;
 };
 
 class EditableMesh final {
@@ -130,8 +132,12 @@ public:
         EditableEdgeId edge, std::string* error = nullptr);
     [[nodiscard]] std::optional<EditableLoopCutResult> loopCut(
         EditableEdgeId edge, std::uint32_t cuts, std::string* error = nullptr);
+    static constexpr std::uint32_t kMaximumBevelSegments = 16U;
     [[nodiscard]] std::optional<EditableBevelResult> bevelEdge(
         EditableEdgeId edge, float width, std::string* error = nullptr);
+    [[nodiscard]] std::optional<EditableBevelResult> bevelEdges(
+        std::span<const EditableEdgeId> edges, float width, std::uint32_t segments = 1U,
+        std::string* error = nullptr);
     [[nodiscard]] bool deleteFaces(std::span<const EditableFaceId> faces,
                                    std::string* error = nullptr);
     [[nodiscard]] bool deleteEdges(std::span<const EditableEdgeId> edges,
@@ -165,6 +171,10 @@ private:
     [[nodiscard]] EditableHalfEdge* findHalfEdgeMutable(EditableHalfEdgeId id) noexcept;
     [[nodiscard]] EditableEdge* findEdgeMutable(EditableEdgeId id) noexcept;
     [[nodiscard]] EditableVertexId destination(EditableHalfEdgeId id) const noexcept;
+    [[nodiscard]] EditableHalfEdgeId previousHalfEdge(EditableHalfEdgeId id) const noexcept;
+    // Releases a vertex that no half-edge references any more. Relies on the invariant,
+    // enforced by validate(), that every referenced vertex has a live outgoing half-edge.
+    [[nodiscard]] bool removeIsolatedVertex(EditableVertexId vertex, std::string* error);
 
     [[nodiscard]] EditableHalfEdgeId allocateHalfEdge();
     [[nodiscard]] EditableEdgeId allocateEdge();

@@ -404,7 +404,7 @@ bool EditorSession::gridFillSelectedMeshBoundary(std::uint32_t span, std::uint32
 }
 
 
-bool EditorSession::bevelSelectedMeshEdge(float width, std::string* error) {
+bool EditorSession::bevelSelectedMeshEdges(float width, std::uint32_t segments, std::string* error) {
     if (!meshEditTransaction_) {
         if (error) *error = "Edit Mode is not active";
         return false;
@@ -415,19 +415,20 @@ bool EditorSession::bevelSelectedMeshEdge(float width, std::string* error) {
         return false;
     }
     const auto selected = selection.selectedEdges();
-    if (selected.size() != 1U) {
-        if (error) *error = "Current Bevel baseline requires exactly one selected edge";
+    if (selected.empty()) {
+        if (error) *error = "Bevel requires at least one selected edge";
         return false;
     }
 
     EditableMesh candidate = meshEditTransaction_->working;
-    const auto result = candidate.bevelEdge(selected.front(), width, error);
+    const auto result = candidate.bevelEdges(selected, width, segments, error);
     if (!result || !applyMeshEditPreview(candidate, error)) return false;
 
     selection.clear();
     selection.setMode(MeshSelectionMode::Face);
-    (void)selection.select(meshEditTransaction_->working, result->bevelFace,
-                           MeshSelectionAction::Replace);
+    for (const auto face : result->faces) {
+        (void)selection.select(meshEditTransaction_->working, face, MeshSelectionAction::Add);
+    }
     ++selectionRevision_;
     ++uiRevision_;
     if (error) error->clear();

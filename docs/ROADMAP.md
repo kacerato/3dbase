@@ -137,7 +137,7 @@ At this point the first APK may become useful enough for internal testing, but p
 - [x] Extrude.
 - [x] Inset.
 - [x] Loop cut.
-- [ ] Bevel.
+- [x] Bevel.
 - [ ] Knife.
 - [x] Merge/Weld.
 - [x] Subdivide.
@@ -145,7 +145,7 @@ At this point the first APK may become useful enough for internal testing, but p
 - [x] Bridge loops.
 - [x] Normals tools.
 
-Current modeling baselines: Loop Cut propagates across complete quad rings with 1–32 evenly spaced cuts; Edge Slide remains a separate follow-up operator. Bevel now has a strong-copy single-edge hard-surface baseline for closed manifold edges with valence-3 endpoints and width validation; chains/loops, endpoint policies and multi-segment profiles remain pending before the Bevel checklist item is complete. Single-loop Fill and structured Grid Fill are implemented. Grid Fill uses explicit Span/Offset and a Coons-style interior patch to create quads while preserving the selected boundary. Bridge supports two disjoint closed loops with equal or unequal vertex counts, using cyclic minimum-distance alignment and a validated quad/triangle zipper strip. Vertex/Edge/Face delete is topology-aware. Normal orientation tools provide connected-component Flip and closed-component Recalculate Outside; smooth/split/custom shading normals remain in the shading/material stage.
+Current modeling baselines: Loop Cut propagates across complete quad rings with 1–32 evenly spaced cuts; Edge Slide remains a separate follow-up operator. Bevel works on any selection of closed manifold edges (single edges, open chains, closed loops and junctions) around interior vertices of any valence, with 1–16 segments. It is a vertex-split bevel: where two or more beveled edges meet, each sector of the vertex fan gets one new vertex offset `width` from the bounding edges; three or more beveled edges are closed by a corner patch (planar n-gon, or a centre fan when non-planar or segmented). Terminal edges slide along their fan neighbours; valence-3 terminals cap the bevel with the remaining face, higher valences keep the vertex and taper the strip into it. Profiles are rational quadratic arcs controlled by the original corner, exact circles on equal-leg corners. Boundary edges/vertices, profile shape control, clamp-overlap and self-intersection handling remain follow-ups. Single-loop Fill and structured Grid Fill are implemented. Grid Fill uses explicit Span/Offset and a Coons-style interior patch to create quads while preserving the selected boundary. Bridge supports two disjoint closed loops with equal or unequal vertex counts, using cyclic minimum-distance alignment and a validated quad/triangle zipper strip. Vertex/Edge/Face delete is topology-aware. Normal orientation tools provide connected-component Flip and closed-component Recalculate Outside; smooth/split/custom shading normals remain in the shading/material stage.
 
 Exit criterion: useful polygon modeling can be completed entirely on mobile.
 

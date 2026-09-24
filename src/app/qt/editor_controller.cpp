@@ -839,13 +839,19 @@ bool EditorController::deleteSelectedMeshElements() {
     return true;
 }
 
-bool EditorController::bevelSelectedEdge(double width) {
+bool EditorController::bevelSelectedEdges(double width, int segments) {
+    if (segments < 1 || segments > static_cast<int>(m3d::EditableMesh::kMaximumBevelSegments)) {
+        setStatus(QStringLiteral("Bevel segments must be between 1 and %1.")
+                      .arg(m3d::EditableMesh::kMaximumBevelSegments));
+        return false;
+    }
     std::string error;
-    if (!session_.bevelSelectedMeshEdge(static_cast<float>(width), &error)) {
+    if (!session_.bevelSelectedMeshEdges(static_cast<float>(width),
+                                         static_cast<std::uint32_t>(segments), &error)) {
         setStatus(QString::fromStdString(error));
         return false;
     }
-    setStatus(QStringLiteral("Single manifold edge beveled. Chains and segments remain pending."));
+    setStatus(QStringLiteral("Bevel applied with %1 segment(s).").arg(segments));
     refreshUi();
     emit editModeChanged();
     return true;

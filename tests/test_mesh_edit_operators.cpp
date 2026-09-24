@@ -643,7 +643,7 @@ TEST_CASE("edit mode single edge bevel previews and commits through one undo") {
     REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Edge));
     const auto edge = session.editableMesh()->edges().front().id;
     REQUIRE(session.selectMeshEdge(edge));
-    REQUIRE(session.bevelSelectedMeshEdge(0.1F, &error));
+    REQUIRE(session.bevelSelectedMeshEdges(0.1F, 1U, &error));
     REQUIRE(error.empty());
     REQUIRE(session.editableMesh()->vertexCount() == 10U);
     REQUIRE(session.editableMesh()->edgeCount() == 15U);
@@ -662,6 +662,48 @@ TEST_CASE("edit mode single edge bevel previews and commits through one undo") {
     REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 7U);
 }
 
+TEST_CASE("edit mode bevels a selected edge loop with segments as one undo step") {
+    const auto path = meshOperatorProjectPath();
+    MeshOperatorCleanup cleanup(path);
+    m3d::EditorSession session;
+    std::string error;
+    const auto object = createEditableCube(session, path, error);
+    REQUIRE(object.has_value());
+    REQUIRE(session.setMeshSelectionMode(m3d::MeshSelectionMode::Edge));
+
+    const auto* mesh = session.editableMesh();
+    const auto* face = mesh->findFace(mesh->faces().front().id);
+    auto current = face->halfEdge;
+    bool first = true;
+    do {
+        const auto* halfEdge = mesh->findHalfEdge(current);
+        REQUIRE(session.selectMeshEdge(halfEdge->edge, first ? m3d::MeshSelectionAction::Replace
+                                                             : m3d::MeshSelectionAction::Add));
+        first = false;
+        current = halfEdge->next;
+    } while (current != face->halfEdge);
+    REQUIRE(session.meshSelection()->selectedEdges().size() == 4U);
+
+    REQUIRE(!session.bevelSelectedMeshEdges(0.1F, 0U, &error));
+    REQUIRE(session.meshSelection()->selectedEdges().size() == 4U);
+    REQUIRE(session.bevelSelectedMeshEdges(0.1F, 2U, &error));
+    REQUIRE(error.empty());
+    // Each mitred corner splits into two sector vertices plus one shared profile vertex.
+    REQUIRE(session.editableMesh()->vertexCount() == 16U);
+    REQUIRE(session.editableMesh()->faceCount() == 14U);
+    REQUIRE(session.meshSelection()->mode() == m3d::MeshSelectionMode::Face);
+    REQUIRE(session.meshSelection()->selectedFaces().size() == 8U);
+
+    REQUIRE(session.commitMeshEdit("Bevel Edges", &error));
+    REQUIRE(session.nextUndoName() == "Bevel Edges");
+    REQUIRE(session.undo());
+    const auto resource = *session.scene()->find(*object)->meshResource;
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->vertexCount() == 8U);
+    REQUIRE(session.redo());
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->vertexCount() == 16U);
+    REQUIRE(session.scene()->findMeshResource(resource)->authoring->faceCount() == 14U);
+}
+
 TEST_CASE("edit mode bevel failure leaves working mesh and selection unchanged") {
     const auto path = meshOperatorProjectPath();
     MeshOperatorCleanup cleanup(path);
@@ -673,7 +715,7 @@ TEST_CASE("edit mode bevel failure leaves working mesh and selection unchanged")
     const auto edge = session.editableMesh()->edges().front().id;
     REQUIRE(session.selectMeshEdge(edge));
     const auto before = session.editableMesh()->snapshot();
-    REQUIRE(!session.bevelSelectedMeshEdge(1.0F, &error));
+    REQUIRE(!session.bevelSelectedMeshEdges(1.0F, 1U, &error));
     REQUIRE(!error.empty());
     REQUIRE(session.editableMesh()->snapshot().vertices == before.vertices);
     REQUIRE(session.editableMesh()->snapshot().halfEdges == before.halfEdges);
